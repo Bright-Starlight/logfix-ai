@@ -20,7 +20,7 @@
 ## Technical Context
 
 **Language/Version**: Python 3.11+
-**Primary Dependencies**: FastAPI, React, psycopg2-binary, chardet, python-multipart
+**Primary Dependencies**: FastAPI, React, psycopg2-binary, chardet, python-multipart, loguru
 **Storage**: PostgreSQL（本地单用户）
 **Testing**: pytest（后端）, Vitest（前端）
 **Target Platform**: Windows 环境
@@ -36,7 +36,7 @@
 - [x] 规格已获批准，且用户故事具备独立测试条件。
 - [x] 已明确采用 TDD，并列出先写失败测试的策略。
 - [x] 交付切片按 MVP 优先排序，可独立部署或演示。
-- [x] 已识别日志方案：Python logging框架、`/log` 目录、`logfix-ai_{日期}.log` 命名规范。
+- [x] 已识别日志方案：loguru框架、`/log` 目录、`logfix-ai_{日期}.log` 命名规范。
 - [x] 已定义性能目标与验证方式。
 - [x] 已确认实现和脚本兼容 Windows。
 - [x] 已规划 `/speckit.tasks` 阶段输出 `specs/001-log-split/flow.md`（Mermaid，中文）。
@@ -143,7 +143,7 @@ frontend/
 | 大文件分片 | 前端分片 + 后端流式处理 | 避免内存溢出，支持100MB+ |
 | 编码检测 | chardet / charset-normalizer | Python生态成熟方案 |
 | 状态追踪 | PostgreSQL存储 | 支持刷新后断点续查 |
-| 日志框架 | Python logging | 宪法要求使用logging模块 |
+| 日志框架 | loguru | 零配置、内置文件轮转/保留/压缩、彩色输出、优秀中文编码处理 |
 
 ## Phase 1: Design & Contracts
 
