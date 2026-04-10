@@ -5,7 +5,7 @@
 """
 
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, Optional
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
@@ -27,7 +27,7 @@ def get_database_url() -> str:
     return database_url
 
 
-def init_db(database_url: str | None = None) -> None:
+def init_db(database_url: Optional[str] = None) -> None:
     """初始化数据库引擎和会话工厂"""
     global _engine, _SessionLocal
 

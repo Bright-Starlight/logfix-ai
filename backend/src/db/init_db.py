@@ -10,11 +10,13 @@ import sys
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from typing import Optional
+
 from backend.src.db.session import init_db, create_tables, get_engine
 from backend.src.models.entities import LogFile, SplitSession, SplitResult
 
 
-def init_database(database_url: str | None = None) -> None:
+def init_database(database_url: Optional[str] = None) -> None:
     """
     初始化数据库
 

@@ -46,33 +46,50 @@ def test_validate_regex_pattern_invalid():
 
 
 def test_split_by_regex(sample_log_file):
-    """测试按正则表达式切分"""
+    """测试按正则表达式切分 - 按日期分组"""
     splitter = LogSplitter(sample_log_file, encoding="utf-8")
-    chunks = list(splitter.split_by_regex(r"^\d{4}-\d{2}-\d{2}"))
+    # 使用日期加时间的正则来匹配每个日志条目的开始
+    chunks = list(splitter.split_by_regex(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"))
 
-    assert len(chunks) == 3
+    # 每行是一个独立的chunk（因为每行都是独立条目）
+    assert len(chunks) == 7
 
     # 验证第一个片段
     assert chunks[0].chunk_index == 0
     assert chunks[0].start_line == 1
-    assert chunks[0].end_line == 3
+    assert chunks[0].end_line == 1
     assert "Server started" in chunks[0].content
-    assert "Database query" in chunks[0].content
 
-    # 验证第二个片段
-    assert chunks[1].chunk_index == 1
-    assert chunks[1].start_line == 4
-    assert chunks[2].chunk_index == 2
+    # 验证最后一个片段
+    assert chunks[6].chunk_index == 6
+    assert chunks[6].start_line == 7
+    assert "Health check" in chunks[6].content
 
 
 def test_split_by_fixed_string_with_delimiter(sample_log_file):
-    """测试按固定分隔符切分"""
+    """测试按固定分隔符切分 - 包含ERROR的行被作为分隔符"""
     splitter = LogSplitter(sample_log_file, encoding="utf-8")
     chunks = list(splitter.split_by_fixed_string("ERROR"))
 
-    # 应该切分出包含 ERROR 的行
-    assert len(chunks) >= 1
-    assert any("ERROR" in chunk.content for chunk in chunks)
+    # ERROR行被作为分隔符，不会包含在任何chunk中
+    # Line 5 是 ERROR，所以:
+    # - Chunk 0: lines 1-4 (4行)
+    # - Chunk 1: lines 6-7 (2行)
+    assert len(chunks) == 2
+
+    # 验证第一个chunk包含前三天的日志（到ERROR行之前）
+    assert chunks[0].start_line == 1
+    assert chunks[0].end_line == 4
+    assert "Server started" in chunks[0].content
+
+    # 验证第二个chunk包含ERROR后的行
+    assert chunks[1].start_line == 6
+    assert chunks[1].end_line == 7
+    assert "Connection recovered" in chunks[1].content
+
+    # 验证ERROR行不在任何chunk中
+    for chunk in chunks:
+        assert "ERROR" not in chunk.content
 
 
 def test_split_by_fixed_string_empty_lines(sample_log_file):

@@ -6,7 +6,7 @@
 
 from itertools import islice
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional
 
 import chardet
 
@@ -59,7 +59,7 @@ class FileHandler:
         file_path: Path,
         encoding: str = "utf-8",
         start_line: int = 0,
-        max_lines: int | None = None
+        max_lines: Optional[int] = None
     ) -> list[str]:
         """
         读取文件行
@@ -98,7 +98,7 @@ class FileHandler:
 
 
 # 全局单例
-_file_handler: FileHandler | None = None
+_file_handler: Optional[FileHandler] = None
 
 
 def get_file_handler() -> FileHandler:

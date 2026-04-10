@@ -111,7 +111,7 @@ class LogSplitter:
 
     def split_by_fixed_string(
         self,
-        delimiter: str | None,
+        delimiter: Optional[str],
         include_empty: bool = True
     ) -> Iterator[SplitChunk]:
         """

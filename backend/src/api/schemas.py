@@ -4,6 +4,8 @@ API 请求/响应模型定义
 使用 Pydantic 定义 API 的请求和响应数据结构。
 """
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -76,7 +78,7 @@ class ChunkDetailResponse(BaseModel):
 class UploadResponse(BaseModel):
     """文件上传响应"""
     file_id: str
-    filename: str | None
+    filename: Optional[str]
     file_size: int
     encoding: str
     preview_lines: int

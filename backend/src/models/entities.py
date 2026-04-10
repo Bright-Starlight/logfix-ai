@@ -10,7 +10,7 @@ from typing import Optional, List
 
 from sqlalchemy import Column, String, BigInteger, Text, Integer, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from backend.src.db.session import Base
 
@@ -28,7 +28,7 @@ class LogFile(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # 关联关系
-    sessions: List["SplitSession"] = relationship("SplitSession", back_populates="log_file")
+    sessions: Mapped[List["SplitSession"]] = relationship("SplitSession", back_populates="log_file")
 
     def __repr__(self) -> str:
         return f"<LogFile(id={self.id}, filename={self.filename})>"
@@ -51,8 +51,8 @@ class SplitSession(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # 关联关系
-    log_file: "LogFile" = relationship("LogFile", back_populates="sessions")
-    results: List["SplitResult"] = relationship("SplitResult", back_populates="session")
+    log_file: Mapped["LogFile"] = relationship("LogFile", back_populates="sessions")
+    results: Mapped[List["SplitResult"]] = relationship("SplitResult", back_populates="session")
 
     # 索引
     __table_args__ = (
@@ -78,7 +78,7 @@ class SplitResult(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # 关联关系
-    session: "SplitSession" = relationship("SplitSession", back_populates="results")
+    session: Mapped["SplitSession"] = relationship("SplitSession", back_populates="results")
 
     # 索引
     __table_args__ = (

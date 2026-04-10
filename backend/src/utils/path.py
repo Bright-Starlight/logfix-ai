@@ -7,9 +7,10 @@ Windows 兼容路径处理工具
 import os
 import sys
 from pathlib import Path, PureWindowsPath, PurePosixPath
+from typing import Union
 
 
-def to_pathlib_path(path: str | Path) -> Path:
+def to_pathlib_path(path: Union[str, Path]) -> Path:
     """
     将路径转换为标准的 Path 对象
 
@@ -24,7 +25,7 @@ def to_pathlib_path(path: str | Path) -> Path:
     return Path(path)
 
 
-def normalize_path(path: str | Path) -> str:
+def normalize_path(path: Union[str, Path]) -> str:
     """
     标准化路径，转换为适合当前操作系统的格式
 
@@ -41,7 +42,7 @@ def normalize_path(path: str | Path) -> str:
     return str(p)
 
 
-def to_posix_path(path: str | Path) -> str:
+def to_posix_path(path: Union[str, Path]) -> str:
     """
     转换为 POSIX 路径格式（正斜杠）
 
@@ -55,7 +56,7 @@ def to_posix_path(path: str | Path) -> str:
     return p.as_posix()
 
 
-def to_windows_path(path: str | Path) -> str:
+def to_windows_path(path: Union[str, Path]) -> str:
     """
     转换为 Windows 路径格式（反斜杠）
 
@@ -92,7 +93,7 @@ def join_paths(*parts: str) -> str:
     return normalize_path(Path(*parts))
 
 
-def get_relative_path(path: str | Path, base: str | Path) -> Path:
+def get_relative_path(path: Union[str, Path], base: Union[str, Path]) -> Path:
     """
     获取相对路径
 
@@ -109,7 +110,7 @@ def get_relative_path(path: str | Path, base: str | Path) -> Path:
 
 
 # 用于创建目录的跨平台函数
-def ensure_dir(path: str | Path) -> Path:
+def ensure_dir(path: Union[str, Path]) -> Path:
     """
     确保目录存在，如不存在则创建
 
