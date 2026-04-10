@@ -25,7 +25,7 @@ class LogFile(Base):
     file_size = Column(BigInteger, nullable=False)
     encoding = Column(String(32), nullable=False, default="utf-8")
     storage_path = Column(String(512), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
 
     # 关联关系
     sessions: Mapped[List["SplitSession"]] = relationship("SplitSession", back_populates="log_file")
@@ -47,8 +47,8 @@ class SplitSession(Base):
     total_chunks = Column(Integer, default=0)
     processed_chunks = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
 
     # 关联关系
     log_file: Mapped["LogFile"] = relationship("LogFile", back_populates="sessions")
@@ -75,7 +75,7 @@ class SplitResult(Base):
     start_line = Column(Integer, nullable=False)
     end_line = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
 
     # 关联关系
     session: Mapped["SplitSession"] = relationship("SplitSession", back_populates="results")
