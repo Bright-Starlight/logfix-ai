@@ -6,11 +6,13 @@ API 路由定义
 
 import os
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, File, UploadFile, Form, Query
 from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.src.api.schemas import (
@@ -23,9 +25,23 @@ from backend.src.api.schemas import (
     SessionStatusResponse,
     ResultsResponse,
     ChunkDetailResponse,
+    # 002-short-name-structured 新增
+    ClassifyRequest,
+    LogEntryResponse,
+    LogListItemResponse,
+    LogDetailResponse,
+    StatsResponse,
+    ParseRuleResponse,
+    CreateParseRuleRequest,
+    UpdateParseRuleRequest,
+    IgnoreRuleResponse,
+    CreateIgnoreRuleRequest,
 )
 from backend.src.db.session import get_db_session
-from backend.src.models.entities import LogFile, SplitSession, SplitResult
+from backend.src.models.entities import (
+    LogFile, SplitSession, SplitResult,
+    LogEntry, LogCategory, ParseRule, IgnoreRule, LogStatistics
+)
 from backend.src.services.file_handler import get_file_handler, FileHandler
 from backend.src.services.splitter import LogSplitter, validate_regex_pattern
 from backend.src.services.log_service import (
@@ -34,6 +50,9 @@ from backend.src.services.log_service import (
     log_error,
     get_logger,
 )
+from backend.src.services.classification_service import classify_logs
+from backend.src.services.rule_engine import validate_rule_syntax
+from backend.src.services.ignore_rule_service import validate_ignore_pattern
 from backend.src.utils.path import safe_filename
 
 router = APIRouter(prefix="/api")
@@ -386,3 +405,448 @@ async def get_chunk_detail(session_id: str, chunk_index: int):
     except Exception as e:
         logger.error(f"获取片段详情失败: {e}")
         return make_error("INTERNAL_ERROR", "获取片段详情失败", 500)
+
+
+# ============ 002-short-name-structured 新增端点 ============
+
+
+@router.post("/classify")
+async def classify_logs_endpoint(request: ClassifyRequest):
+    """日志分类与存储"""
+    try:
+        with get_db_session() as db:
+            result = await classify_logs(
+                db=db,
+                logs=request.logs,
+                mode=request.mode,
+                file_id=request.file_id,
+            )
+
+            return make_response(result)
+
+    except Exception as e:
+        logger.error(f"分类失败: {e}")
+        log_error("INTERNAL_ERROR", str(e), {"mode": request.mode})
+        return make_error("INTERNAL_ERROR", "分类处理失败", 500)
+
+
+@router.get("/logs")
+async def get_logs_list(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    category: Optional[str] = None,
+    level: Optional[str] = None,
+    keyword: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """获取日志列表（分页）"""
+    try:
+        with get_db_session() as db:
+            query = db.query(LogEntry)
+
+            # 分类过滤
+            if category:
+                cat = db.query(LogCategory).filter(
+                    LogCategory.name == category
+                ).first()
+                if cat:
+                    query = query.filter(LogEntry.category_id == cat.id)
+
+            # 级别过滤
+            if level:
+                query = query.filter(LogEntry.log_level == level.upper())
+
+            # 关键词搜索
+            if keyword:
+                query = query.filter(
+                    LogEntry.normalized_message.ilike(f"%{keyword}%")
+                )
+
+            # 日期范围过滤
+            if start_date:
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                query = query.filter(LogEntry.created_at >= start_dt)
+
+            if end_date:
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                query = query.filter(LogEntry.created_at <= end_dt)
+
+            # 总数
+            total = query.count()
+
+            # 分页
+            total_pages = (total + page_size - 1) // page_size
+            offset = (page - 1) * page_size
+
+            entries = query.order_by(
+                LogEntry.created_at.desc()
+            ).offset(offset).limit(page_size).all()
+
+            # 构建响应
+            items = []
+            for entry in entries:
+                cat_name = None
+                if entry.category:
+                    cat_name = entry.category.name
+
+                items.append({
+                    "id": str(entry.id),
+                    "normalized_message": entry.normalized_message,
+                    "stack_trace": entry.stack_trace,
+                    "category": cat_name,
+                    "error_type": entry.error_type,
+                    "log_level": entry.log_level,
+                    "occurrence_count": entry.occurrence_count,
+                    "first_seen_at": entry.first_seen_at.isoformat() if entry.first_seen_at else None,
+                    "last_seen_at": entry.last_seen_at.isoformat() if entry.last_seen_at else None,
+                })
+
+            return make_response({
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "entries": items,
+            })
+
+    except Exception as e:
+        logger.error(f"获取日志列表失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取日志列表失败", 500)
+
+
+@router.get("/logs/{log_id}")
+async def get_log_detail(log_id: str):
+    """获取日志详情"""
+    try:
+        with get_db_session() as db:
+            entry = db.query(LogEntry).filter(
+                LogEntry.id == uuid.UUID(log_id)
+            ).first()
+
+            if not entry:
+                return make_error("LOG_NOT_FOUND", "日志条目不存在", 404)
+
+            cat_name = None
+            if entry.category:
+                cat_name = entry.category.name
+
+            return make_response({
+                "id": str(entry.id),
+                "original_message": entry.original_message,
+                "normalized_message": entry.normalized_message,
+                "stack_trace": entry.stack_trace,
+                "category": cat_name,
+                "category_id": str(entry.category_id) if entry.category_id else None,
+                "error_type": entry.error_type,
+                "extracted_params": entry.extracted_params,
+                "log_level": entry.log_level,
+                "occurrence_count": entry.occurrence_count,
+                "first_seen_at": entry.first_seen_at.isoformat() if entry.first_seen_at else None,
+                "last_seen_at": entry.last_seen_at.isoformat() if entry.last_seen_at else None,
+            })
+
+    except Exception as e:
+        logger.error(f"获取日志详情失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取日志详情失败", 500)
+
+
+@router.get("/stats")
+async def get_stats(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """获取统计信息"""
+    try:
+        with get_db_session() as db:
+            query = db.query(LogEntry)
+
+            # 日期范围过滤
+            if start_date:
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                query = query.filter(LogEntry.created_at >= start_dt)
+
+            if end_date:
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                query = query.filter(LogEntry.created_at <= end_dt)
+
+            # 总条目数和唯一错误数
+            total_entries = query.count()
+            unique_errors = query.distinct(LogEntry.normalized_message).count()
+
+            # 分类统计
+            category_stats = db.query(
+                LogCategory.name,
+                func.count(LogEntry.id).label("count")
+            ).join(
+                LogEntry, LogEntry.category_id == LogCategory.id
+            ).group_by(LogCategory.name).all()
+
+            categories = []
+            for name, count in category_stats:
+                percentage = (count / total_entries * 100) if total_entries > 0 else 0
+                categories.append({
+                    "name": name,
+                    "count": count,
+                    "percentage": round(percentage, 2),
+                })
+
+            # 每日趋势（最近7天）
+            daily_trend = []
+            for i in range(7):
+                day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                from datetime import timedelta
+                day = day - timedelta(days=i)
+                day_str = day.strftime("%Y-%m-%d")
+
+                count = query.filter(
+                    func.date(LogEntry.created_at) == day.date()
+                ).count()
+
+                daily_trend.append({
+                    "date": day_str,
+                    "count": count,
+                })
+
+            daily_trend.reverse()
+
+            return make_response({
+                "total_entries": total_entries,
+                "unique_errors": unique_errors,
+                "categories": categories,
+                "daily_trend": daily_trend,
+            })
+
+    except Exception as e:
+        logger.error(f"获取统计失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取统计信息失败", 500)
+
+
+# ============ 规则管理端点 ============
+
+
+@router.get("/rules")
+async def get_rules():
+    """获取解析规则列表"""
+    try:
+        with get_db_session() as db:
+            rules = db.query(ParseRule).order_by(
+                ParseRule.priority.desc()
+            ).all()
+
+            return make_response({
+                "rules": [
+                    {
+                        "id": str(rule.id),
+                        "name": rule.name,
+                        "rule_type": rule.rule_type,
+                        "pattern": rule.pattern,
+                        "code": rule.code,
+                        "priority": rule.priority,
+                        "enabled": rule.enabled,
+                        "is_system": rule.is_system,
+                    }
+                    for rule in rules
+                ]
+            })
+
+    except Exception as e:
+        logger.error(f"获取规则列表失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取规则列表失败", 500)
+
+
+@router.post("/rules")
+async def create_rule(request: CreateParseRuleRequest):
+    """创建解析规则"""
+    try:
+        # 验证规则语法
+        is_valid, error_msg = validate_rule_syntax(
+            request.rule_type,
+            request.pattern,
+            request.code,
+        )
+
+        if not is_valid:
+            return make_error("INVALID_RULE", error_msg)
+
+        with get_db_session() as db:
+            rule = ParseRule(
+                name=request.name,
+                rule_type=request.rule_type,
+                pattern=request.pattern,
+                code=request.code,
+                group_index=request.group_index,
+                priority=request.priority,
+                enabled=request.enabled,
+            )
+            db.add(rule)
+            db.flush()
+
+            return make_response({
+                "id": str(rule.id),
+                "name": rule.name,
+                "rule_type": rule.rule_type,
+                "pattern": rule.pattern,
+                "code": rule.code,
+                "priority": rule.priority,
+                "enabled": rule.enabled,
+            })
+
+    except Exception as e:
+        logger.error(f"创建规则失败: {e}")
+        return make_error("INTERNAL_ERROR", "创建规则失败", 500)
+
+
+@router.put("/rules/{rule_id}")
+async def update_rule(rule_id: str, request: UpdateParseRuleRequest):
+    """更新解析规则"""
+    try:
+        with get_db_session() as db:
+            rule = db.query(ParseRule).filter(
+                ParseRule.id == uuid.UUID(rule_id)
+            ).first()
+
+            if not rule:
+                return make_error("RULE_NOT_FOUND", "规则不存在", 404)
+
+            # 如果是系统规则，禁止修改
+            if rule.is_system:
+                return make_error("SYSTEM_RULE_CANNOT_MODIFY", "系统预置规则不可修改")
+
+            # 更新字段
+            if request.name is not None:
+                rule.name = request.name
+            if request.pattern is not None:
+                rule.pattern = request.pattern
+            if request.code is not None:
+                rule.code = request.code
+            if request.priority is not None:
+                rule.priority = request.priority
+            if request.enabled is not None:
+                rule.enabled = request.enabled
+
+            return make_response({
+                "id": str(rule.id),
+                "name": rule.name,
+                "rule_type": rule.rule_type,
+                "pattern": rule.pattern,
+                "priority": rule.priority,
+                "enabled": rule.enabled,
+            })
+
+    except Exception as e:
+        logger.error(f"更新规则失败: {e}")
+        return make_error("INTERNAL_ERROR", "更新规则失败", 500)
+
+
+@router.delete("/rules/{rule_id}")
+async def delete_rule(rule_id: str):
+    """删除解析规则"""
+    try:
+        with get_db_session() as db:
+            rule = db.query(ParseRule).filter(
+                ParseRule.id == uuid.UUID(rule_id)
+            ).first()
+
+            if not rule:
+                return make_error("RULE_NOT_FOUND", "规则不存在", 404)
+
+            # 系统规则不可删除
+            if rule.is_system:
+                return make_error("SYSTEM_RULE_CANNOT_DELETE", "系统预置规则不可删除")
+
+            db.delete(rule)
+
+            return make_response(None)
+
+    except Exception as e:
+        logger.error(f"删除规则失败: {e}")
+        return make_error("INTERNAL_ERROR", "删除规则失败", 500)
+
+
+# ============ 忽略规则端点 ============
+
+
+@router.get("/ignore-rules")
+async def get_ignore_rules():
+    """获取忽略规则列表"""
+    try:
+        with get_db_session() as db:
+            rules = db.query(IgnoreRule).all()
+
+            return make_response({
+                "rules": [
+                    {
+                        "id": str(rule.id),
+                        "name": rule.name,
+                        "match_type": rule.match_type,
+                        "pattern": rule.pattern,
+                        "description": rule.description,
+                        "enabled": rule.enabled,
+                    }
+                    for rule in rules
+                ]
+            })
+
+    except Exception as e:
+        logger.error(f"获取忽略规则列表失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取忽略规则列表失败", 500)
+
+
+@router.post("/ignore-rules")
+async def create_ignore_rule(request: CreateIgnoreRuleRequest):
+    """创建忽略规则"""
+    try:
+        # 验证模式
+        is_valid, error_msg = validate_ignore_pattern(
+            request.match_type,
+            request.pattern,
+        )
+
+        if not is_valid:
+            return make_error("INVALID_RULE", error_msg)
+
+        with get_db_session() as db:
+            rule = IgnoreRule(
+                name=request.name,
+                match_type=request.match_type,
+                pattern=request.pattern,
+                description=request.description,
+                enabled=request.enabled,
+            )
+            db.add(rule)
+            db.flush()
+
+            return make_response({
+                "id": str(rule.id),
+                "name": rule.name,
+                "match_type": rule.match_type,
+                "pattern": rule.pattern,
+                "description": rule.description,
+                "enabled": rule.enabled,
+            })
+
+    except Exception as e:
+        logger.error(f"创建忽略规则失败: {e}")
+        return make_error("INTERNAL_ERROR", "创建忽略规则失败", 500)
+
+
+@router.delete("/ignore-rules/{rule_id}")
+async def delete_ignore_rule(rule_id: str):
+    """删除忽略规则"""
+    try:
+        with get_db_session() as db:
+            rule = db.query(IgnoreRule).filter(
+                IgnoreRule.id == uuid.UUID(rule_id)
+            ).first()
+
+            if not rule:
+                return make_error("RULE_NOT_FOUND", "规则不存在", 404)
+
+            db.delete(rule)
+
+            return make_response(None)
+
+    except Exception as e:
+        logger.error(f"删除忽略规则失败: {e}")
+        return make_error("INTERNAL_ERROR", "删除忽略规则失败", 500)

@@ -9,6 +9,17 @@ import type {
   ResultsResponse,
   RegexValidationRequest,
   RegexValidationResponse,
+  // 002-short-name-structured 新增
+  ClassifyRequest,
+  ClassifyResponse,
+  LogListResponse,
+  LogDetailResponse,
+  StatsResponse,
+  ParseRuleResponse,
+  CreateParseRuleRequest,
+  UpdateParseRuleRequest,
+  IgnoreRuleResponse,
+  CreateIgnoreRuleRequest,
 } from '../types'
 
 const api = axios.create({
@@ -100,6 +111,91 @@ export const getChunkDetail = async (
   const response = await api.get<ApiResponse<{ content: string; line_count: number }>>(
     `/results/${sessionId}/chunks/${chunkIndex}`
   )
+  return response.data
+}
+
+// ============ 002-short-name-structured 新增 API ============
+
+export const classifyLogs = async (
+  request: ClassifyRequest
+): Promise<ApiResponse<ClassifyResponse>> => {
+  const response = await api.post<ApiResponse<ClassifyResponse>>('/classify', request)
+  return response.data
+}
+
+export const getLogsList = async (
+  page: number = 1,
+  pageSize: number = 50,
+  filters?: {
+    category?: string
+    level?: string
+    keyword?: string
+    start_date?: string
+    end_date?: string
+  }
+): Promise<ApiResponse<LogListResponse>> => {
+  const response = await api.get<ApiResponse<LogListResponse>>('/logs', {
+    params: { page, page_size: pageSize, ...filters },
+  })
+  return response.data
+}
+
+export const getLogDetail = async (
+  logId: string
+): Promise<ApiResponse<LogDetailResponse>> => {
+  const response = await api.get<ApiResponse<LogDetailResponse>>(`/logs/${logId}`)
+  return response.data
+}
+
+export const getStats = async (
+  startDate?: string,
+  endDate?: string
+): Promise<ApiResponse<StatsResponse>> => {
+  const response = await api.get<ApiResponse<StatsResponse>>('/stats', {
+    params: { start_date: startDate, end_date: endDate },
+  })
+  return response.data
+}
+
+export const getRules = async (): Promise<ApiResponse<{ rules: ParseRuleResponse[] }>> => {
+  const response = await api.get<ApiResponse<{ rules: ParseRuleResponse[] }>>('/rules')
+  return response.data
+}
+
+export const createRule = async (
+  request: CreateParseRuleRequest
+): Promise<ApiResponse<ParseRuleResponse>> => {
+  const response = await api.post<ApiResponse<ParseRuleResponse>>('/rules', request)
+  return response.data
+}
+
+export const updateRule = async (
+  ruleId: string,
+  request: UpdateParseRuleRequest
+): Promise<ApiResponse<ParseRuleResponse>> => {
+  const response = await api.put<ApiResponse<ParseRuleResponse>>(`/rules/${ruleId}`, request)
+  return response.data
+}
+
+export const deleteRule = async (ruleId: string): Promise<ApiResponse<null>> => {
+  const response = await api.delete<ApiResponse<null>>(`/rules/${ruleId}`)
+  return response.data
+}
+
+export const getIgnoreRules = async (): Promise<ApiResponse<{ rules: IgnoreRuleResponse[] }>> => {
+  const response = await api.get<ApiResponse<{ rules: IgnoreRuleResponse[] }>>('/ignore-rules')
+  return response.data
+}
+
+export const createIgnoreRule = async (
+  request: CreateIgnoreRuleRequest
+): Promise<ApiResponse<IgnoreRuleResponse>> => {
+  const response = await api.post<ApiResponse<IgnoreRuleResponse>>('/ignore-rules', request)
+  return response.data
+}
+
+export const deleteIgnoreRule = async (ruleId: string): Promise<ApiResponse<null>> => {
+  const response = await api.delete<ApiResponse<null>>(`/ignore-rules/${ruleId}`)
   return response.data
 }
 
