@@ -210,3 +210,38 @@ export interface CreateIgnoreRuleRequest {
   description?: string
   enabled?: boolean
 }
+
+// ============ 003-log-analysis-pipeline 新增类型 ============
+
+export type ClassificationMode = 'rule_engine' | 'ai'
+
+export interface ClassificationStartRequest {
+  split_session_id: string
+  mode: ClassificationMode
+}
+
+export interface ClassificationStartResponse {
+  session_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+}
+
+export interface ClassificationProgressResponse {
+  session_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_items: number
+  processed_items: number
+  current_phase?: string
+  estimated_remaining_seconds?: number
+  progress_percent: number
+}
+
+export interface ClassificationResultResponse {
+  session_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_items: number
+  processed_items: number
+  new_entries: number
+  duplicates: number
+  ignored: number
+  completed_at?: string
+}

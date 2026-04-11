@@ -20,6 +20,11 @@ import type {
   UpdateParseRuleRequest,
   IgnoreRuleResponse,
   CreateIgnoreRuleRequest,
+  // 003-log-analysis-pipeline 新增
+  ClassificationStartRequest,
+  ClassificationStartResponse,
+  ClassificationProgressResponse,
+  ClassificationResultResponse,
 } from '../types'
 
 const api = axios.create({
@@ -196,6 +201,29 @@ export const createIgnoreRule = async (
 
 export const deleteIgnoreRule = async (ruleId: string): Promise<ApiResponse<null>> => {
   const response = await api.delete<ApiResponse<null>>(`/ignore-rules/${ruleId}`)
+  return response.data
+}
+
+// ============ 003-log-analysis-pipeline 新增 API ============
+
+export const startClassification = async (
+  request: ClassificationStartRequest
+): Promise<ApiResponse<ClassificationStartResponse>> => {
+  const response = await api.post<ApiResponse<ClassificationStartResponse>>('/classification/start', request)
+  return response.data
+}
+
+export const getClassificationProgress = async (
+  sessionId: string
+): Promise<ApiResponse<ClassificationProgressResponse>> => {
+  const response = await api.get<ApiResponse<ClassificationProgressResponse>>(`/classification/${sessionId}/progress`)
+  return response.data
+}
+
+export const getClassificationResult = async (
+  sessionId: string
+): Promise<ApiResponse<ClassificationResultResponse>> => {
+  const response = await api.get<ApiResponse<ClassificationResultResponse>>(`/classification/${sessionId}/result`)
   return response.data
 }
 

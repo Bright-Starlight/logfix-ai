@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getLogsList } from '../services/api'
-import type { LogListItemResponse, LogListResponse } from '../types'
+import type { LogListItemResponse } from '../types'
 import type { SearchFilters } from './SearchFilter'
 
 interface LogListProps {
