@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react'
 import { uploadFile } from '../services/api'
-import type { UploadResponse } from '../types'
 
 interface FileUploadProps {
   onFileUploaded: (fileId: string) => void
