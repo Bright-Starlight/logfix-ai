@@ -3,6 +3,8 @@ import type {
   ApiResponse,
   UploadResponse,
   FilePreviewResponse,
+  FileListItem,
+  SessionListItem,
   SplitRequest,
   SplitResponse,
   SessionStatus,
@@ -111,6 +113,16 @@ export const getChunkDetail = async (
   const response = await api.get<ApiResponse<{ content: string; line_count: number }>>(
     `/results/${sessionId}/chunks/${chunkIndex}`
   )
+  return response.data
+}
+
+export const getFileList = async (): Promise<ApiResponse<{ files: FileListItem[] }>> => {
+  const response = await api.get<ApiResponse<{ files: FileListItem[] }>>('/files')
+  return response.data
+}
+
+export const getSessionList = async (): Promise<ApiResponse<{ sessions: SessionListItem[] }>> => {
+  const response = await api.get<ApiResponse<{ sessions: SessionListItem[] }>>('/sessions')
   return response.data
 }
 

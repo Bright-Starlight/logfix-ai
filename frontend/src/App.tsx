@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import FileUpload from './components/FileUpload'
 import LogPreview from './components/LogPreview'
 import SplitConfig from './components/SplitConfig'
@@ -7,7 +7,10 @@ import LogList from './components/LogList'
 import LogDetail from './components/LogDetail'
 import SearchFilter from './components/SearchFilter'
 import StatsPanel from './components/StatsPanel'
+import ClassificationStream from './components/ClassificationStream'
 import type { SearchFilters } from './components/SearchFilter'
+import type { SessionListItem } from './types'
+import { getSessionList } from './services/api'
 
 export interface AppState {
   fileId: string | null
@@ -27,6 +30,35 @@ function App() {
     selectedLogId: null,
     searchFilters: {},
   })
+  const [sessions, setSessions] = useState<SessionListItem[]>([])
+  const [classificationStarted, setClassificationStarted] = useState(false)
+
+  // 加载切分会话列表
+  useEffect(() => {
+    if (state.activeView === 'classify' && !classificationStarted) {
+      loadSessions()
+    }
+  }, [state.activeView, classificationStarted])
+
+  const loadSessions = async () => {
+    try {
+      const response = await getSessionList()
+      if (response.success && response.data) {
+        setSessions(response.data.sessions)
+      }
+    } catch (err) {
+      console.error('加载会话列表失败:', err)
+    }
+  }
+
+  const handleClassificationComplete = () => {
+    setClassificationStarted(false)
+    loadSessions() // 刷新会话列表
+  }
+
+  const handleClassificationCancel = () => {
+    setClassificationStarted(false)
+  }
 
   const handleFileUploaded = (fileId: string) => {
     setState((prev) => ({ ...prev, fileId, sessionId: null, splitStatus: 'idle' }))
@@ -122,12 +154,22 @@ function App() {
               <LogDetail logId={state.selectedLogId} onBack={handleLogBack} />
             ) : (
               <>
-                <StatsPanel />
-                <SearchFilter onSearch={handleSearch} />
-                <LogList
-                  onLogSelect={handleLogSelect}
-                  filters={state.searchFilters}
-                />
+                {classificationStarted ? (
+                  <ClassificationStream
+                    sessions={sessions}
+                    onComplete={handleClassificationComplete}
+                    onCancel={handleClassificationCancel}
+                  />
+                ) : (
+                  <>
+                    <StatsPanel />
+                    <SearchFilter onSearch={handleSearch} />
+                    <LogList
+                      onLogSelect={handleLogSelect}
+                      filters={state.searchFilters}
+                    />
+                  </>
+                )}
               </>
             )}
           </>

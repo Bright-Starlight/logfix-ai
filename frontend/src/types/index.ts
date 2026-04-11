@@ -15,6 +15,26 @@ export interface FilePreviewResponse {
   encoding: string
 }
 
+export interface FileListItem {
+  id: string
+  filename: string
+  file_size: number
+  encoding: string
+  created_at: string
+}
+
+export interface SessionListItem {
+  id: string
+  file_id: string
+  rule_type: string
+  rule_content: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_chunks: number
+  processed_chunks: number
+  has_classification: boolean
+  created_at: string
+}
+
 export interface SplitRequest {
   file_id: string
   rule_type: 'regex' | 'fixed_string'
@@ -209,4 +229,39 @@ export interface CreateIgnoreRuleRequest {
   pattern: string
   description?: string
   enabled?: boolean
+}
+
+// ============ 004-ai-tool-call-streaming SSE 类型 ============
+
+export interface SSEProgressEvent {
+  processed: number
+  total: number
+  percentage: number
+}
+
+export interface SSEResultEvent {
+  index: number
+  category: string
+  error_type?: string
+  normalized_message: string
+  extracted_params: Record<string, unknown>
+}
+
+export interface SSEErrorEvent {
+  code: string
+  message: string
+  index?: number
+  processed_at_cancel?: number
+  batch?: number
+}
+
+export interface SSEDoneEvent {
+  total_processed: number
+  success_count: number
+  error_count: number
+}
+
+export interface ClassificationStartRequest {
+  split_session_id: string
+  mode: 'ai'
 }

@@ -23,7 +23,7 @@ from backend.src.services.deduplicator import (
     compute_message_hash,
 )
 from backend.src.services.rule_engine import execute_rules_chain
-from backend.src.services.ai_analyzer import analyze_logs_ai, classify_with_ai_result
+from backend.src.services.ai_analyzer import analyze_logs_ai, classify_with_ai_result, ClassificationResult
 from backend.src.services.ignore_rule_service import should_ignore
 from backend.src.models.entities import (
     LogEntry,
@@ -123,6 +123,8 @@ async def classify_logs(
     new_entries = 0
     duplicates = 0
     entries = []
+    _ai_results: Optional[list] = None  # AI 批量结果缓存
+    _ai_error: Optional[str] = None      # AI 错误信息缓存
 
     for log_entry in logs:
         processed += 1
@@ -164,24 +166,30 @@ async def classify_logs(
 
         elif mode == "ai":
             # AI 模式 - 批量处理
-            ai_classifications, ai_duplicates, ai_error = await analyze_logs_ai(logs)
+            # 注意：AI 分析已在循环外批量调用，这里直接使用结果
+            if _ai_results is None:
+                # 首次进入 AI 模式，预获取 AI 结果
+                _ai_results, _ai_error = await analyze_logs_ai(logs)
+                if _ai_error:
+                    _logger.error(f"AI 分析失败: {ai_error}")
 
-            if ai_error:
-                _logger.error(f"AI 分析失败: {ai_error}")
-                # 降级到规则引擎
-                category_name, error_type = classify_message(log_entry)
-                extracted_params = {}
-            else:
-                # 使用 AI 结果
-                for i, classification in enumerate(ai_classifications):
-                    if i == processed - 1:
+            if _ai_results:
+                # 使用 AI 结果查找对应索引
+                found = False
+                for classification in _ai_results:
+                    if classification.index == processed - 1:
                         category_name, error_type, extracted_params = classify_with_ai_result(
                             log_entry, classification
                         )
+                        found = True
                         break
-                else:
+                if not found:
                     category_name, error_type = classify_message(log_entry)
                     extracted_params = {}
+            else:
+                # AI 失败，降级到规则引擎
+                category_name, error_type = classify_message(log_entry)
+                extracted_params = {}
         else:
             _logger.error(f"未知模式: {mode}")
             category_name, error_type = classify_message(log_entry)

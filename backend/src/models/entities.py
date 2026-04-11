@@ -266,3 +266,42 @@ class ClassificationSession(Base):
     def __repr__(self) -> str:
         return f"<ClassificationSession(id={self.id}, status={self.status}, mode={self.mode})>"
 
+
+# ============ 004-ai-tool-call-streaming 新增实体 ============
+
+
+class TokenUsage(Base):
+    """Token 使用记录实体 - 用于追踪 AI API 调用消耗"""
+
+    __tablename__ = "token_usage"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(100), nullable=True)  # 用户标识，可为空
+    session_id = Column(UUID(as_uuid=True), ForeignKey("classification_sessions.id"), nullable=True)  # 关联分类会话
+    method = Column(String(32), nullable=False)  # tool_call / prompt_engineering
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    total_tokens = Column(Integer, nullable=False, default=0)  # input + output
+    model = Column(String(50), nullable=False)  # 模型名称
+    batch_size = Column(Integer, nullable=True)  # 处理的批次大小
+    batch_index = Column(Integer, nullable=True)  # 批次索引，用于追踪同一会话内不同批次
+    processing_time_ms = Column(Integer, nullable=True)  # 处理耗时（毫秒）
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+    # 关联关系
+    classification_session: Mapped[Optional["ClassificationSession"]] = relationship(
+        "ClassificationSession", backref="token_usages"
+    )
+
+    # 索引
+    __table_args__ = (
+        Index("idx_token_usage_user_id", "user_id"),
+        Index("idx_token_usage_session_id", "session_id"),
+        Index("idx_token_usage_method", "method"),
+        Index("idx_token_usage_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TokenUsage(id={self.id}, method={self.method}, total_tokens={self.total_tokens})>"
+
+
