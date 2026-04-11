@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
 
 # 加载 .env 文件
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 Base = declarative_base()
 

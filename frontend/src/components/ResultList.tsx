@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
-import { getSplitResults, getChunkDetail } from '../services/api'
-import type { ResultsResponse, SplitResult } from '../types'
+import { getSplitResults, getChunkDetail, startClassification } from '../services/api'
+import { useClassificationProgress } from '../hooks/useClassificationProgress'
+import ClassificationModeSelect from './ClassificationModeSelect'
+import ProgressBar from './ProgressBar'
+import type { ResultsResponse, SplitResult, ClassificationMode } from '../types'
 
 interface ResultListProps {
   sessionId: string
@@ -14,6 +17,14 @@ export default function ResultList({ sessionId }: ResultListProps) {
   const [chunkContent, setChunkContent] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
+
+  // Classification state
+  const [classificationSessionId, setClassificationSessionId] = useState<string | null>(null)
+  const [isClassifying, setIsClassifying] = useState(false)
+  const [showModeSelect, setShowModeSelect] = useState(true)
+  const [classificationError, setClassificationError] = useState<string | null>(null)
+
+  const classificationProgress = useClassificationProgress(classificationSessionId)
 
   useEffect(() => {
     const fetchResults = async () => {
@@ -60,6 +71,37 @@ export default function ResultList({ sessionId }: ResultListProps) {
     }
   }
 
+  const handleModeSelected = async (mode: ClassificationMode) => {
+    try {
+      setClassificationError(null)
+      setIsClassifying(true)
+
+      // Start classification
+      const response = await startClassification({
+        split_session_id: sessionId,
+        mode,
+      })
+
+      if (response.success && response.data) {
+        setClassificationSessionId(response.data.session_id)
+        setShowModeSelect(false)
+      } else if (response.error) {
+        setClassificationError(response.error.message)
+        setIsClassifying(false)
+      }
+    } catch (err) {
+      setClassificationError(err instanceof Error ? err.message : '启动分类失败')
+      setIsClassifying(false)
+    }
+  }
+
+  const handleRetry = () => {
+    setClassificationSessionId(null)
+    setShowModeSelect(true)
+    setIsClassifying(false)
+    setClassificationError(null)
+  }
+
   if (loading) {
     return <div className="loading">加载结果中...</div>
   }
@@ -72,6 +114,7 @@ export default function ResultList({ sessionId }: ResultListProps) {
     return null
   }
 
+  // Show classification UI after split is complete
   return (
     <div className="result-list">
       <h2>切分结果</h2>
@@ -82,6 +125,26 @@ export default function ResultList({ sessionId }: ResultListProps) {
           第{results.page}页 / 共{results.total_pages}页
         </span>
       </div>
+
+      {/* Classification Mode Selection */}
+      {showModeSelect && !classificationSessionId && (
+        <div className="classification-section">
+          <ClassificationModeSelect
+            onModeSelected={handleModeSelected}
+            isProcessing={isClassifying}
+          />
+          {classificationError && (
+            <div className="error-message">{classificationError}</div>
+          )}
+        </div>
+      )}
+
+      {/* Progress Bar */}
+      {classificationSessionId && (
+        <div className="classification-progress-section">
+          <ProgressBar progress={classificationProgress} onRetry={handleRetry} />
+        </div>
+      )}
 
       <div className="results-container">
         <div className="results-sidebar">

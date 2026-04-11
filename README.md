@@ -14,3 +14,25 @@
 - 阅读 PRD：查看 `docs/logfix-ai-prd/01-prd.md`
 - 规划 MVP：查看 `docs/logfix-ai-prd/02-mvp-breakdown.md`
 - 按工作包推进：查看 `docs/logfix-ai-prd/requirements/README.md`
+
+## 启动命令
+
+### 前端
+
+```bash
+cd frontend
+npm run dev
+```
+
+### 后端
+
+```bash
+cd ..
+python -m uvicorn backend.src.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Docker (PostgreSQL)
+
+```bash
+docker run -d --name postgres -e POSTGRES_USER=vitacare -e POSTGRES_PASSWORD=vitacare -e POSTGRES_DB=logfix_ai -p 5432:5432 postgres:16
+```

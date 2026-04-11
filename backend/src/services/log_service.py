@@ -8,10 +8,15 @@
 - 必须使用标准日志级别：DEBUG、INFO、WARNING、ERROR
 """
 
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 from loguru import logger
+
+# 加载 .env 文件
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 LOG_DIR = Path("log")
 LOG_DIR.mkdir(exist_ok=True)
@@ -23,13 +28,16 @@ def get_log_filename() -> str:
     return f"logfix-ai_{date_str}.log"
 
 
-def setup_logging(log_level: str = "INFO") -> None:
+def setup_logging(log_level: str = None) -> None:
     """
     配置 loguru 日志系统
 
     Args:
-        log_level: 日志级别，默认 INFO
+        log_level: 日志级别，默认从环境变量读取或 INFO
     """
+    if log_level is None:
+        import os
+        log_level = os.getenv("LOG_LEVEL", "INFO")
     # 移除默认的 handler
     logger.remove()
 
@@ -40,7 +48,7 @@ def setup_logging(log_level: str = "INFO") -> None:
     logger.add(
         sys.stderr,
         format="<level>{message}</level>",
-        level="INFO",
+        level=log_level,
         colorize=True,
     )
 
@@ -108,5 +116,63 @@ def log_split_progress(session_id: str, processed_chunks: int, total_chunks: int
     )
 
 
+# ============ 003-log-analysis-pipeline 新增日志函数 ============
+
+# 分类模式选择事件日志
+def log_classification_mode_selected(mode: str, session_id: str) -> None:
+    """记录分类模式选择事件"""
+    get_logger().info(
+        f"分类模式选择: mode={mode}, session_id={session_id}"
+    )
+
+
+# 分类进度更新事件日志
+def log_classification_progress(
+    session_id: str,
+    status: str,
+    processed_items: int,
+    total_items: int,
+    current_phase: str
+) -> None:
+    """记录分类进度更新"""
+    progress_percent = int(processed_items / total_items * 100) if total_items > 0 else 0
+    get_logger().info(
+        f"分类进度: session_id={session_id}, status={status}, "
+        f"processed={processed_items}/{total_items}, "
+        f"percent={progress_percent}%, phase={current_phase}"
+    )
+
+
+# 分类结果事件日志
+def log_classification_result(
+    session_id: str,
+    new_entries: int,
+    duplicates: int,
+    ignored: int
+) -> None:
+    """记录分类结果"""
+    get_logger().info(
+        f"分类结果: session_id={session_id}, "
+        f"new_entries={new_entries}, duplicates={duplicates}, ignored={ignored}"
+    )
+
+
+# 去重检测结果日志
+def log_deduplication_result(session_id: str, is_duplicate: bool, entry_id: str) -> None:
+    """记录去重检测结果"""
+    result_type = "duplicate" if is_duplicate else "new"
+    get_logger().debug(
+        f"去重检测: session_id={session_id}, result={result_type}, entry_id={entry_id}"
+    )
+
+
+# 忽略规则匹配日志
+def log_ignore_rule_match(session_id: str, rule_name: str, pattern: str) -> None:
+    """记录忽略规则匹配"""
+    get_logger().debug(
+        f"忽略规则匹配: session_id={session_id}, rule={rule_name}, pattern={pattern}"
+    )
+
+
 # 初始化默认 logger
-setup_logging()
+setup_logging("DEBUG")

@@ -42,7 +42,7 @@ def build_analysis_prompt(log_entries: list[str]) -> str:
     """
     logs_text = "\n".join([f"{i}. {log}" for i, log in enumerate(log_entries)])
 
-    prompt = f"""你是一个日志分析助手。请分析以下日志条目，进行分类和去重。
+    prompt = f"""你是一个日志分析助手。请分析以下日志条目，提取错误类型。
 
 日志条目：
 {logs_text}
@@ -52,10 +52,9 @@ def build_analysis_prompt(log_entries: list[str]) -> str:
   "classifications": [
     {{
       "original_index": 0,
-      "category": "异常错误",
+      "matched": true,
       "error_type": "NullPointerException",
-      "normalized_message": "Null pointer at line *",
-      "extracted_params": {{"line": "10"}}
+      "params": {{"line": "10"}}
     }}
   ],
   "duplicates": [
@@ -67,10 +66,10 @@ def build_analysis_prompt(log_entries: list[str]) -> str:
 }}
 
 注意：
-1. 相同错误消息（仅参数不同）应归为同一组
-2. normalized_message 应去除参数，保留错误模式（数字用*代替）
-3. extracted_params 应提取所有参数
-4. 如果日志无法分类，请返回 null
+1. matched 表示是否成功匹配到错误类型
+2. error_type 应提取错误类型（如 NullPointerException、IOException 等）
+3. params 应提取所有关键参数（如行号、文件名等）
+4. 如果日志无法分类，matched 设为 false
 
 请直接输出 JSON，不要有其他内容。"""
 
@@ -136,7 +135,13 @@ async def analyze_logs_ai(log_entries: list[str]) -> tuple[Optional[list], Optio
             ]
         )
 
-        response_text = response.content[0].text
+        # 提取文本内容（跳过思考块）
+        response_text = ""
+        _logger.debug(f"AI 响应: {response.content}...")
+        for block in response.content:
+            if block.type == "text":
+                response_text = block.text
+                break
         _logger.debug(f"AI 响应: {response_text[:200]}...")
 
         classifications, duplicates = parse_ai_response(response_text)
@@ -170,8 +175,27 @@ def classify_with_ai_result(
     Returns:
         (category, error_type, extracted_params)
     """
-    category = classification.get("category", "异常错误")
+    matched = classification.get("matched", False)
     error_type = classification.get("error_type")
-    extracted_params = classification.get("extracted_params", {})
+    params = classification.get("params", {})
 
-    return category, error_type, extracted_params
+    # 如果未匹配，使用默认分类
+    if not matched:
+        from backend.src.services.classifier import classify_message
+        category, _ = classify_message(log_entry)
+        return category, error_type, params
+
+    # 规则引擎不返回 category，需要推断
+    category = "异常错误"
+    if error_type:
+        error_type_lower = error_type.lower()
+        if "exception" in error_type_lower or "error" in error_type_lower:
+            category = "异常错误"
+        elif "warn" in error_type_lower:
+            category = "警告"
+        elif "info" in error_type_lower:
+            category = "信息"
+        elif "debug" in error_type_lower:
+            category = "调试"
+
+    return category, error_type, params
