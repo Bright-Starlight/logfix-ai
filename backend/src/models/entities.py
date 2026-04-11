@@ -47,12 +47,16 @@ class SplitSession(Base):
     total_chunks = Column(Integer, default=0)
     processed_chunks = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
+    has_classification = Column(Boolean, default=False)  # 是否已完成分类
     created_at = Column(DateTime, nullable=False, default=datetime.now)
     updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
 
     # 关联关系
     log_file: Mapped["LogFile"] = relationship("LogFile", back_populates="sessions")
     results: Mapped[List["SplitResult"]] = relationship("SplitResult", back_populates="session")
+    classification_session: Mapped["ClassificationSession"] = relationship(
+        "ClassificationSession", back_populates="split_session", uselist=False
+    )
 
     # 索引
     __table_args__ = (
@@ -122,7 +126,7 @@ class LogEntry(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     original_message = Column(Text, nullable=False)
-    normalized_message = Column(String(500), nullable=False, index=True)
+    normalized_message = Column(Text, nullable=False)  # 使用 Text 而非 String(500) 以支持长日志
     stack_trace = Column(Text, nullable=True)
     category_id = Column(UUID(as_uuid=True), ForeignKey("log_categories.id"), nullable=True, index=True)
     error_type = Column(String(100), nullable=True, index=True)
@@ -139,7 +143,6 @@ class LogEntry(Base):
 
     # 索引
     __table_args__ = (
-        Index("idx_normalized_message", "normalized_message"),
         Index("idx_category_id", "category_id"),
         Index("idx_error_type", "error_type"),
         Index("idx_log_level", "log_level"),
@@ -183,7 +186,7 @@ class IgnoreRule(Base):
     __tablename__ = "ignore_rules"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(100), nullable=False)
+    name = Column(String(500), nullable=False)
     match_type = Column(String(20), nullable=False)  # contains / regex / exact
     pattern = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
@@ -224,3 +227,42 @@ class LogStatistics(Base):
 
     def __repr__(self) -> str:
         return f"<LogStatistics(date={self.date}, entry_count={self.entry_count})>"
+
+
+# ============ 003-log-analysis-pipeline 新增实体 ============
+
+
+class ClassificationSession(Base):
+    """分类会话实体 - 用于进度跟踪"""
+
+    __tablename__ = "classification_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    split_session_id = Column(UUID(as_uuid=True), ForeignKey("split_sessions.id"), nullable=False)
+    mode = Column(String(20), nullable=False)  # rule_engine / ai
+    status = Column(String(20), nullable=False, default="pending")  # pending / processing / completed / failed
+    total_items = Column(Integer, default=0)  # 待处理日志总数
+    processed_items = Column(Integer, default=0)  # 已处理数量
+    new_entries = Column(Integer, default=0)  # 新增条目数
+    duplicates = Column(Integer, default=0)  # 重复条目数
+    ignored = Column(Integer, default=0)  # 忽略条目数
+    current_phase = Column(String(50), nullable=True)  # 当前阶段名称
+    estimated_remaining_seconds = Column(Integer, nullable=True)  # 预估剩余秒数
+    error_message = Column(Text, nullable=True)  # 失败时的错误信息
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+    completed_at = Column(DateTime, nullable=True)  # 完成时间
+
+    # 关联关系
+    split_session: Mapped["SplitSession"] = relationship("SplitSession", back_populates="classification_session")
+
+    # 索引
+    __table_args__ = (
+        Index("idx_classification_session_status", "status"),
+        Index("idx_classification_session_split", "split_session_id"),
+        Index("idx_classification_session_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ClassificationSession(id={self.id}, status={self.status}, mode={self.mode})>"
+

@@ -1,0 +1,154 @@
+# Classification Progress API Contract
+
+## Overview
+
+进度跟踪 API 用于前端轮询获取分类处理实时进度。
+
+## Endpoints
+
+### GET /api/classification/{session_id}/progress
+
+获取指定分类会话的当前进度。
+
+**Path Parameters**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| session_id | UUID | 是 | 分类会话ID |
+
+**Response 200**:
+```yaml
+{
+  session_id: "550e8400-e29b-41d4-a716-446655440000",
+  status: "processing",
+  total_items: 1000,
+  processed_items: 350,
+  current_phase: "去重检测中",
+  estimated_remaining_seconds: 45,
+  progress_percent: 35
+}
+```
+
+**Response 404**:
+```yaml
+{
+  success: false,
+  error: {
+    code: "SESSION_NOT_FOUND",
+    message: "分类会话不存在"
+  }
+}
+```
+
+**Status Enum**:
+| 状态值 | 说明 |
+|--------|------|
+| PENDING | 等待中（任务已创建但尚未开始处理） |
+| PROCESSING | 处理中 |
+| COMPLETED | 已完成 |
+| FAILED | 失败 |
+
+**Phase Names (current_phase)**:
+| 阶段名 | 说明 |
+|--------|------|
+| 准备中 | 初始化分类环境 |
+| 去重检测中 | 执行去重检查 |
+| 忽略规则过滤中 | 应用忽略规则 |
+| 分类分析中 | 执行分类逻辑 |
+| 存储中 | 写入数据库 |
+| 完成 | 所有处理完成 |
+
+---
+
+### POST /api/classification/start
+
+启动新的分类处理流程。
+
+**Request Body**:
+```yaml
+{
+  split_session_id: "550e8400-e29b-41d4-a716-446655440000",
+  mode: "rule_engine"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| split_session_id | UUID | 是 | 关联的切分会话ID |
+| mode | string | 是 | 分类模式：`rule_engine` 或 `ai` |
+
+**Response 201**:
+```yaml
+{
+  success: true,
+  data: {
+    session_id: "660e8400-e29b-41d4-a716-446655440001",
+    status: "pending"
+  }
+}
+```
+
+**Response 409**:
+```yaml
+{
+  success: false,
+  error: {
+    code: "CLASSIFICATION_ALREADY_EXISTS",
+    message: "该切分会话已有进行中的分类任务"
+  }
+}
+```
+
+**Response 404**:
+```yaml
+{
+  success: false,
+  error: {
+    code: "SPLIT_SESSION_NOT_FOUND",
+    message: "切分会话不存在"
+  }
+}
+```
+
+---
+
+### GET /api/classification/{session_id}/result
+
+获取分类处理结果（分类完成后）。
+
+**Path Parameters**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| session_id | UUID | 是 | 分类会话ID |
+
+**Response 200**:
+```yaml
+{
+  success: true,
+  data: {
+    session_id: "660e8400-e29b-41d4-a716-446655440001",
+    status: "completed",
+    total_items: 1000,
+    processed_items: 1000,
+    new_entries: 150,
+    duplicates: 800,
+    ignored: 50,
+    completed_at: "2026-04-11T12:00:00Z"
+  }
+}
+```
+
+## Error Codes
+
+| 代码 | HTTP Status | 说明 |
+|------|-------------|------|
+| SESSION_NOT_FOUND | 404 | 分类会话不存在 |
+| SPLIT_SESSION_NOT_FOUND | 404 | 关联的切分会话不存在 |
+| CLASSIFICATION_ALREADY_EXISTS | 409 | 该切分会话已有进行中的分类任务 |
+| INVALID_MODE | 400 | 无效的分类模式 |
+
+## Implementation Notes
+
+1. **Polling Interval**: 前端应每2秒轮询一次 `/api/classification/{session_id}/progress`
+2. **Completion Detection**: 当 `status` 变为 `COMPLETED` 或 `FAILED` 时停止轮询
+3. **Estimated Time**: `estimated_remaining_seconds` 基于已处理速度和剩余数量计算
+4. **Progress Percent**: `progress_percent = (processed_items / total_items) * 100`，整数

@@ -36,11 +36,17 @@ from backend.src.api.schemas import (
     UpdateParseRuleRequest,
     IgnoreRuleResponse,
     CreateIgnoreRuleRequest,
+    # 003-log-analysis-pipeline 新增
+    ClassificationStartRequest,
+    ClassificationStartResponse,
+    ClassificationProgressResponse,
+    ClassificationResultResponse,
 )
 from backend.src.db.session import get_db_session
 from backend.src.models.entities import (
     LogFile, SplitSession, SplitResult,
-    LogEntry, LogCategory, ParseRule, IgnoreRule, LogStatistics
+    LogEntry, LogCategory, ParseRule, IgnoreRule, LogStatistics,
+    ClassificationSession
 )
 from backend.src.services.file_handler import get_file_handler, FileHandler
 from backend.src.services.splitter import LogSplitter, validate_regex_pattern
@@ -806,9 +812,12 @@ async def create_ignore_rule(request: CreateIgnoreRuleRequest):
         if not is_valid:
             return make_error("INVALID_RULE", error_msg)
 
+        # 防御性截断：确保 name 不超过数据库列长度
+        name = request.name[:500]
+
         with get_db_session() as db:
             rule = IgnoreRule(
-                name=request.name,
+                name=name,
                 match_type=request.match_type,
                 pattern=request.pattern,
                 description=request.description,
@@ -850,3 +859,225 @@ async def delete_ignore_rule(rule_id: str):
     except Exception as e:
         logger.error(f"删除忽略规则失败: {e}")
         return make_error("INTERNAL_ERROR", "删除忽略规则失败", 500)
+
+
+# ============ 003-log-analysis-pipeline 新增端点 ============
+
+
+@router.post("/classification/start")
+async def start_classification(request: ClassificationStartRequest):
+    """启动分类处理流程"""
+    try:
+        session_id = None
+
+        with get_db_session() as db:
+            # 检查切分会话是否存在
+            split_session = db.query(SplitSession).filter(
+                SplitSession.id == uuid.UUID(request.split_session_id)
+            ).first()
+
+            if not split_session:
+                return make_error("SPLIT_SESSION_NOT_FOUND", "切分会话不存在", 404)
+
+            # 检查是否已有进行中的分类任务
+            existing = db.query(ClassificationSession).filter(
+                ClassificationSession.split_session_id == uuid.UUID(request.split_session_id),
+                ClassificationSession.status.in_(["pending", "processing"])
+            ).first()
+
+            if existing:
+                return make_error(
+                    "CLASSIFICATION_ALREADY_EXISTS",
+                    "该切分会话已有进行中的分类任务",
+                    409
+                )
+
+            # 获取切分片段总数作为 total_items
+            total_items = db.query(SplitResult).filter(
+                SplitResult.session_id == uuid.UUID(request.split_session_id)
+            ).count()
+
+            # 创建分类会话
+            classification_session = ClassificationSession(
+                split_session_id=uuid.UUID(request.split_session_id),
+                mode=request.mode,
+                status="pending",
+                total_items=total_items,
+                processed_items=0,
+                current_phase="准备中",
+            )
+            db.add(classification_session)
+            db.flush()
+
+            # 更新切分会话关联
+            split_session.has_classification = True
+
+            session_id = str(classification_session.id)
+
+            # 记录日志
+            from backend.src.services.log_service import log_classification_mode_selected
+            log_classification_mode_selected(request.mode, session_id)
+
+        # 在响应返回后异步执行分类
+        # 注意：上面的 db session 已关闭，下面的分类任务会使用自己的 session
+        if session_id:
+            import asyncio
+            # 注意：fire-and-forget 模式，服务器重启时任务会丢失
+            # 生产环境建议使用后台任务队列（Celery/RQ）或 FastAPI BackgroundTasks
+            logger.warning(f"启动异步分类任务（fire-and-forget）: session_id={session_id}")
+            asyncio.create_task(run_classification_async(session_id, request.split_session_id, request.mode))
+
+        return make_response({
+            "session_id": session_id,
+            "status": "pending"
+        }, status_code=201)
+
+    except Exception as e:
+        logger.error(f"启动分类失败: {e}")
+        log_error("INTERNAL_ERROR", str(e), {"split_session_id": request.split_session_id})
+        return make_error("INTERNAL_ERROR", "启动分类失败", 500)
+
+
+async def run_classification_async(session_id: str, split_session_id: str, mode: str):
+    """异步执行分类任务"""
+    import asyncio
+    from backend.src.services.classification_service import classify_logs
+    from backend.src.db.session import get_db_session
+
+    try:
+        # 更新状态为处理中
+        with get_db_session() as db:
+            session = db.query(ClassificationSession).filter(
+                ClassificationSession.id == uuid.UUID(session_id)
+            ).first()
+            if session:
+                session.status = "processing"
+                db.commit()
+
+        # 获取切分结果
+        with get_db_session() as db:
+            split_results = db.query(SplitResult).filter(
+                SplitResult.session_id == uuid.UUID(split_session_id)
+            ).all()
+
+            logs = [result.content for result in split_results]
+
+        # 在线程池中执行 CPU 密集型的分类任务，避免阻塞 event loop
+        result = None
+        result = await asyncio.to_thread(
+            _run_classification_sync,
+            session_id,
+            split_session_id,
+            mode,
+            logs
+        )
+
+        # 更新分类会话的统计结果
+        if result:
+            with get_db_session() as db:
+                session = db.query(ClassificationSession).filter(
+                    ClassificationSession.id == uuid.UUID(session_id)
+                ).first()
+                if session:
+                    session.new_entries = result.get("new_entries", 0)
+                    session.duplicates = result.get("duplicates", 0)
+                    session.ignored = result.get("ignored", 0)
+                    db.commit()
+
+    except Exception as e:
+        logger.error(f"异步分类任务失败: {e}")
+        # 更新分类会话状态为失败
+        try:
+            with get_db_session() as db:
+                session = db.query(ClassificationSession).filter(
+                    ClassificationSession.id == uuid.UUID(session_id)
+                ).first()
+                if session:
+                    session.status = "failed"
+                    session.error_message = str(e)
+                    db.commit()
+        except:
+            pass
+
+
+def _run_classification_sync(session_id: str, split_session_id: str, mode: str, logs: list):
+    """在线程池中执行的同步分类任务"""
+    from backend.src.services.classification_service import classify_logs
+    from backend.src.db.session import get_db_session
+    import asyncio
+
+    # 创建新的 event loop 用于这个线程
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        with get_db_session() as db:
+            result = loop.run_until_complete(
+                classify_logs(
+                    db=db,
+                    logs=logs,
+                    mode=mode,
+                    classification_session_id=session_id,
+                )
+            )
+        return result
+    finally:
+        loop.close()
+
+
+@router.get("/classification/{session_id}/progress")
+async def get_classification_progress(session_id: str):
+    """获取分类进度"""
+    try:
+        with get_db_session() as db:
+            session = db.query(ClassificationSession).filter(
+                ClassificationSession.id == uuid.UUID(session_id)
+            ).first()
+
+            if not session:
+                return make_error("SESSION_NOT_FOUND", "分类会话不存在", 404)
+
+            total = session.total_items or 1
+            processed = session.processed_items or 0
+            progress_percent = int(processed / total * 100) if total > 0 else 0
+
+            return make_response({
+                "session_id": session_id,
+                "status": session.status,
+                "total_items": total,
+                "processed_items": processed,
+                "current_phase": session.current_phase,
+                "estimated_remaining_seconds": session.estimated_remaining_seconds,
+                "progress_percent": progress_percent,
+            })
+
+    except Exception as e:
+        logger.error(f"获取分类进度失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取分类进度失败", 500)
+
+
+@router.get("/classification/{session_id}/result")
+async def get_classification_result(session_id: str):
+    """获取分类结果"""
+    try:
+        with get_db_session() as db:
+            session = db.query(ClassificationSession).filter(
+                ClassificationSession.id == uuid.UUID(session_id)
+            ).first()
+
+            if not session:
+                return make_error("SESSION_NOT_FOUND", "分类会话不存在", 404)
+
+            return make_response({
+                "session_id": session_id,
+                "status": session.status,
+                "total_items": session.total_items,
+                "processed_items": session.processed_items,
+                "new_entries": session.new_entries,
+                "duplicates": session.duplicates,
+                "ignored": session.ignored,
+                "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+            })
+
+    except Exception as e:
+        logger.error(f"获取分类结果失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取分类结果失败", 500)

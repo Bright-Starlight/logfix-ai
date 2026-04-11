@@ -241,8 +241,46 @@ class IgnoreRuleListResponse(BaseModel):
 
 class CreateIgnoreRuleRequest(BaseModel):
     """创建忽略规则请求"""
-    name: str
+    name: str = Field(..., max_length=500)
     match_type: str = Field(..., pattern="^(contains|regex|exact)$")
     pattern: str
     description: Optional[str] = None
     enabled: bool = True
+
+
+# ============ 003-log-analysis-pipeline 新增 Schema ============
+
+
+class ClassificationStartRequest(BaseModel):
+    """启动分类会话请求"""
+    split_session_id: str = Field(..., description="关联的切分会话ID")
+    mode: str = Field(..., pattern="^(rule_engine|ai)$", description="分类模式: rule_engine 或 ai")
+
+
+class ClassificationStartResponse(BaseModel):
+    """启动分类会话响应"""
+    session_id: str
+    status: str
+
+
+class ClassificationProgressResponse(BaseModel):
+    """分类进度响应"""
+    session_id: str
+    status: str
+    total_items: int
+    processed_items: int
+    current_phase: Optional[str] = None
+    estimated_remaining_seconds: Optional[int] = None
+    progress_percent: int
+
+
+class ClassificationResultResponse(BaseModel):
+    """分类结果响应"""
+    session_id: str
+    status: str
+    total_items: int
+    processed_items: int
+    new_entries: int
+    duplicates: int
+    ignored: int
+    completed_at: Optional[str] = None
