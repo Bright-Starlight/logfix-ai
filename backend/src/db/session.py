@@ -4,11 +4,16 @@
 提供数据库连接池和会话管理的功能。
 """
 
+import os
 from contextlib import contextmanager
 from typing import Generator, Optional
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
+
+# 加载 .env 文件
+load_dotenv()
 
 Base = declarative_base()
 
@@ -18,8 +23,6 @@ _SessionLocal = None
 
 def get_database_url() -> str:
     """从环境变量获取数据库URL"""
-    import os
-
     database_url = os.getenv(
         "DATABASE_URL",
         "postgresql://postgres:postgres@localhost:5432/logfix_ai"
@@ -88,7 +91,10 @@ def get_db_session() -> Generator[Session, None, None]:
 
 def create_tables() -> None:
     """创建所有表"""
-    from backend.src.models.entities import LogFile, SplitSession, SplitResult
+    from backend.src.models.entities import (
+        LogFile, SplitSession, SplitResult,
+        LogCategory, LogEntry, ParseRule, IgnoreRule, LogStatistics
+    )
 
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
