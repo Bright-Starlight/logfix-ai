@@ -8,7 +8,7 @@
 ### 日志分类与存储流程
 
 ```mermaid
-flow TD
+flowchart TD
     A[开始] --> B[接收日志数据]
     B --> C{检查忽略规则}
     C -->|匹配| D[跳过日志]
@@ -28,7 +28,7 @@ flow TD
 ### 规则引擎处理流程
 
 ```mermaid
-flow TD
+flowchart TD
     A[日志输入] --> B[按优先级排序规则]
     B --> C{还有未处理规则?}
     C -->|是| D[取下一条规则]
@@ -49,7 +49,7 @@ flow TD
 ### AI模式处理流程
 
 ```mermaid
-flow TD
+flowchart TD
     A[日志输入] --> B[构建Prompt]
     B --> C[调用MiniMax API]
     C --> D{API响应正常?}
@@ -66,7 +66,7 @@ flow TD
 ### 用户交互流程
 
 ```mermaid
-flow TD
+flowchart TD
     A[用户上传日志文件] --> B[系统切分日志]
     B --> C[用户触发分类]
     C --> D[系统处理中...]
@@ -92,74 +92,74 @@ erDiagram
     IgnoreRule ||--o{ LogEntry : filters
 
     LogCategory {
-        uuid id PK
-        string name
-        text description
-        string color
-        int sort_order
-        boolean is_system
-        timestamp created_at
-        timestamp updated_at
+        id uuid PK
+        name string
+        description text
+        color string
+        sort_order int
+        is_system boolean
+        created_at timestamp
+        updated_at timestamp
     }
 
     LogEntry {
-        uuid id PK
-        text original_message
-        string normalized_message
-        text stack_trace
-        uuid category_id FK
-        string error_type
-        jsonb extracted_params
-        string log_level
-        int occurrence_count
-        timestamp first_seen_at
-        timestamp last_seen_at
-        timestamp created_at
-        timestamp updated_at
+        id uuid PK
+        original_message text
+        normalized_message string
+        stack_trace text
+        category_id uuid FK
+        error_type string
+        extracted_params jsonb
+        log_level string
+        occurrence_count int
+        first_seen_at timestamp
+        last_seen_at timestamp
+        created_at timestamp
+        updated_at timestamp
     }
 
     ParseRule {
-        uuid id PK
-        string name
-        text description
-        string rule_type
-        text pattern
-        text code
-        int group_index
-        int priority
-        boolean enabled
-        boolean is_system
-        timestamp created_at
-        timestamp updated_at
+        id uuid PK
+        name string
+        description text
+        rule_type string
+        pattern text
+        code text
+        group_index int
+        priority int
+        enabled boolean
+        is_system boolean
+        created_at timestamp
+        updated_at timestamp
     }
 
     IgnoreRule {
-        uuid id PK
-        string name
-        string match_type
-        string pattern
-        text description
-        boolean enabled
-        timestamp created_at
-        timestamp updated_at
+        id uuid PK
+        name string
+        match_type string
+        pattern string
+        description text
+        enabled boolean
+        created_at timestamp
+        updated_at timestamp
     }
 
     LogStatistics {
-        uuid id PK
+        id uuid PK
         date date
-        uuid category_id FK
-        int entry_count
-        int unique_error_count
-        int total_occurrence
-        timestamp created_at
-        timestamp updated_at
+        category_id uuid FK
+        entry_count int
+        unique_error_count int
+        total_occurrence int
+        created_at timestamp
+        updated_at timestamp
     }
 ```
 
 ### 错误处理流程
 
 ```mermaid
-flow TD
+flowchart TD
     A[发生错误] --> B{错误类型}
     B -->|数据库错误| C[记录错误日志]
     B -->|规则执行错误| D[跳过当前规则]

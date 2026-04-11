@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, File, UploadFile, Form, Query
 from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.src.api.schemas import (
@@ -576,7 +577,7 @@ async def get_stats(
             # 分类统计
             category_stats = db.query(
                 LogCategory.name,
-                db.func.count(LogEntry.id).label("count")
+                func.count(LogEntry.id).label("count")
             ).join(
                 LogEntry, LogEntry.category_id == LogCategory.id
             ).group_by(LogCategory.name).all()
@@ -599,7 +600,7 @@ async def get_stats(
                 day_str = day.strftime("%Y-%m-%d")
 
                 count = query.filter(
-                    db.func.date(LogEntry.created_at) == day.date()
+                    func.date(LogEntry.created_at) == day.date()
                 ).count()
 
                 daily_trend.append({

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getLogsList } from '../services/api'
 import type { LogListItemResponse, LogListResponse } from '../types'
 import type { SearchFilters } from './SearchFilter'
@@ -17,11 +17,15 @@ export default function LogList({ onLogSelect, filters = {} }: LogListProps) {
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(0)
 
-  useEffect(() => {
-    loadLogs()
-  }, [page, filters])
+  // 将 filters 序列化为字符串作为依赖
+  const filtersKey = JSON.stringify(filters)
 
-  const loadLogs = async () => {
+  // filters 变化时重置页码到第1页
+  useEffect(() => {
+    setPage(1)
+  }, [filtersKey])
+
+  const loadLogs = useCallback(async () => {
     setLoading(true)
     setError(null)
 
@@ -39,7 +43,11 @@ export default function LogList({ onLogSelect, filters = {} }: LogListProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [page, pageSize, filters])
+
+  useEffect(() => {
+    loadLogs()
+  }, [loadLogs, filtersKey])
 
   const handlePrevPage = () => {
     if (page > 1) setPage(page - 1)
