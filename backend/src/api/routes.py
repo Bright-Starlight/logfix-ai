@@ -130,10 +130,9 @@ async def upload_file(
         # 检测编码
         encoding, confidence = file_handler.detect_encoding(storage_path)
 
-        # 创建数据库记录
+        # 创建数据库记录（id 由数据库自动生成）
         with get_db_session() as db:
             log_file = LogFile(
-                id=uuid.UUID(file_id),
                 filename=safe_name,
                 file_size=len(content),
                 encoding=encoding,
@@ -195,7 +194,7 @@ async def get_file_preview(
     """获取文件预览"""
     try:
         with get_db_session() as db:
-            log_file = db.query(LogFile).filter(LogFile.id == uuid.UUID(file_id)).first()
+            log_file = db.query(LogFile).filter(LogFile.id == int(file_id)).first()
 
             if not log_file:
                 return make_error("FILE_NOT_FOUND", "文件不存在", 404)
@@ -255,14 +254,14 @@ async def execute_split(request: SplitRequest):
         # 使用事务确保状态一致性
         with get_db_session() as db:
             # 检查文件是否存在
-            log_file = db.query(LogFile).filter(LogFile.id == uuid.UUID(request.file_id)).first()
+            log_file = db.query(LogFile).filter(LogFile.id == int(request.file_id)).first()
 
             if not log_file:
                 return make_error("FILE_NOT_FOUND", "文件不存在", 404)
 
             # 检查是否有进行中的切分任务
             existing = db.query(SplitSession).filter(
-                SplitSession.file_id == uuid.UUID(request.file_id),
+                SplitSession.file_id == int(request.file_id),
                 SplitSession.status.in_(["pending", "processing"])
             ).first()
 
@@ -282,7 +281,7 @@ async def execute_split(request: SplitRequest):
 
             # 创建切分会话（状态为 processing）
             session = SplitSession(
-                file_id=uuid.UUID(request.file_id),
+                file_id=int(request.file_id),
                 rule_type=request.rule_type,
                 rule_content=request.rule_content,
                 status="processing",
@@ -361,7 +360,7 @@ async def get_session_status(session_id: str):
     try:
         with get_db_session() as db:
             session = db.query(SplitSession).filter(
-                SplitSession.id == uuid.UUID(session_id)
+                SplitSession.id == int(session_id)
             ).first()
 
             if not session:
@@ -397,7 +396,7 @@ async def get_split_results(
     try:
         with get_db_session() as db:
             session = db.query(SplitSession).filter(
-                SplitSession.id == uuid.UUID(session_id)
+                SplitSession.id == int(session_id)
             ).first()
 
             if not session:
@@ -405,7 +404,7 @@ async def get_split_results(
 
             # 查询结果总数
             total_chunks = db.query(SplitResult).filter(
-                SplitResult.session_id == uuid.UUID(session_id)
+                SplitResult.session_id == int(session_id)
             ).count()
 
             total_pages = (total_chunks + page_size - 1) // page_size
@@ -413,7 +412,7 @@ async def get_split_results(
             # 分页查询
             offset = (page - 1) * page_size
             results = db.query(SplitResult).filter(
-                SplitResult.session_id == uuid.UUID(session_id)
+                SplitResult.session_id == int(session_id)
             ).order_by(SplitResult.chunk_index).offset(offset).limit(page_size).all()
 
             # 构建响应，包含 truncated 标志
@@ -449,7 +448,7 @@ async def get_chunk_detail(session_id: str, chunk_index: int):
     try:
         with get_db_session() as db:
             result = db.query(SplitResult).filter(
-                SplitResult.session_id == uuid.UUID(session_id),
+                SplitResult.session_id == int(session_id),
                 SplitResult.chunk_index == chunk_index
             ).first()
 
@@ -583,7 +582,7 @@ async def get_log_detail(log_id: str):
     try:
         with get_db_session() as db:
             entry = db.query(LogEntry).filter(
-                LogEntry.id == uuid.UUID(log_id)
+                LogEntry.id == int(log_id)
             ).first()
 
             if not entry:
@@ -775,7 +774,7 @@ async def update_rule(rule_id: str, request: UpdateParseRuleRequest):
     try:
         with get_db_session() as db:
             rule = db.query(ParseRule).filter(
-                ParseRule.id == uuid.UUID(rule_id)
+                ParseRule.id == int(rule_id)
             ).first()
 
             if not rule:
@@ -817,7 +816,7 @@ async def delete_rule(rule_id: str):
     try:
         with get_db_session() as db:
             rule = db.query(ParseRule).filter(
-                ParseRule.id == uuid.UUID(rule_id)
+                ParseRule.id == int(rule_id)
             ).first()
 
             if not rule:
@@ -912,7 +911,7 @@ async def delete_ignore_rule(rule_id: str):
     try:
         with get_db_session() as db:
             rule = db.query(IgnoreRule).filter(
-                IgnoreRule.id == uuid.UUID(rule_id)
+                IgnoreRule.id == int(rule_id)
             ).first()
 
             if not rule:
@@ -939,7 +938,7 @@ async def start_classification(request: ClassificationStartRequest, background_t
         with get_db_session() as db:
             # 检查切分会话是否存在
             split_session = db.query(SplitSession).filter(
-                SplitSession.id == uuid.UUID(request.split_session_id)
+                SplitSession.id == int(request.split_session_id)
             ).first()
 
             if not split_session:
@@ -947,7 +946,7 @@ async def start_classification(request: ClassificationStartRequest, background_t
 
             # 检查是否已有进行中的分类任务
             existing = db.query(ClassificationSession).filter(
-                ClassificationSession.split_session_id == uuid.UUID(request.split_session_id),
+                ClassificationSession.split_session_id == int(request.split_session_id),
                 ClassificationSession.status.in_(["pending", "processing"])
             ).first()
 
@@ -960,12 +959,12 @@ async def start_classification(request: ClassificationStartRequest, background_t
 
             # 获取切分片段总数作为 total_items
             total_items = db.query(SplitResult).filter(
-                SplitResult.session_id == uuid.UUID(request.split_session_id)
+                SplitResult.session_id == int(request.split_session_id)
             ).count()
 
             # 创建分类会话
             classification_session = ClassificationSession(
-                split_session_id=uuid.UUID(request.split_session_id),
+                split_session_id=int(request.split_session_id),
                 mode=request.mode,
                 status="pending",
                 total_items=total_items,
@@ -1012,7 +1011,7 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
         # 获取切分结果
         with get_db_session() as db:
             split_results = db.query(SplitResult).filter(
-                SplitResult.session_id == uuid.UUID(split_session_id)
+                SplitResult.session_id == int(split_session_id)
             ).all()
             logs = [result.content for result in split_results]
             total_items = len(logs)
@@ -1020,7 +1019,7 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
         # 更新状态为处理中
         with get_db_session() as db:
             session = db.query(ClassificationSession).filter(
-                ClassificationSession.id == uuid.UUID(session_id)
+                ClassificationSession.id == int(session_id)
             ).first()
             if session:
                 session.status = "processing"
@@ -1042,7 +1041,7 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
         if result:
             with get_db_session() as db:
                 session = db.query(ClassificationSession).filter(
-                    ClassificationSession.id == uuid.UUID(session_id)
+                    ClassificationSession.id == int(session_id)
                 ).first()
                 if session:
                     session.status = "completed"
@@ -1060,7 +1059,7 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
         try:
             with get_db_session() as db:
                 session = db.query(ClassificationSession).filter(
-                    ClassificationSession.id == uuid.UUID(session_id)
+                    ClassificationSession.id == int(session_id)
                 ).first()
                 if session:
                     session.status = "failed"
@@ -1098,7 +1097,7 @@ async def get_classification_progress(session_id: str):
     try:
         with get_db_session() as db:
             session = db.query(ClassificationSession).filter(
-                ClassificationSession.id == uuid.UUID(session_id)
+                ClassificationSession.id == int(session_id)
             ).first()
 
             if not session:
@@ -1129,7 +1128,7 @@ async def get_classification_result(session_id: str):
     try:
         with get_db_session() as db:
             session = db.query(ClassificationSession).filter(
-                ClassificationSession.id == uuid.UUID(session_id)
+                ClassificationSession.id == int(session_id)
             ).first()
 
             if not session:
@@ -1185,7 +1184,7 @@ async def classify_logs_stream(request: Request, body: ClassificationStartReques
             # 获取日志内容
             with get_db_session() as db:
                 split_results = db.query(SplitResult).filter(
-                    SplitResult.session_id == uuid.UUID(split_session_id)
+                    SplitResult.session_id == int(split_session_id)
                 ).all()
                 logs = [result.content for result in split_results]
 

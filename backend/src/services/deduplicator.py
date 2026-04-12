@@ -73,7 +73,7 @@ def update_duplicate_entry(
     _logger = get_logger("deduplicator")
 
     entry = db_session.query(LogEntry).filter(
-        LogEntry.id == entry_id
+        LogEntry.id == int(entry_id)
     ).first()
 
     if entry:

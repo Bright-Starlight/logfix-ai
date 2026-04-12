@@ -1,18 +1,14 @@
 <!-- Sync Impact Report
 ========================================
-Version change: 1.6.0 -> 1.7.0
+Version change: 1.7.0 -> 1.8.0
 Modified principles:
-- V. 可观测性 -> 要求使用日志框架，日志文件输出到 /log 目录
+- 无
 Added sections:
-- V. 可观测性 -> 日志文件输出规范、格式要求
+- 数据库规范 -> 表注释、字段注释、Long类型主键禁止UUID
 Removed sections:
 - 无
 Templates requiring updates:
-- ✅ updated: `.specify/templates/plan-template.md`
-- ✅ updated: `.specify/templates/spec-template.md`
-- ✅ updated: `.specify/templates/tasks-template.md`
-- ✅ updated: `.specify/templates/checklist-template.md`
-- ⚠ pending: `.specify/templates/commands/*.md`（目录不存在，无法校验）
+- 无
 Follow-up TODOs:
 - 无
 ========================================
@@ -124,6 +120,15 @@ Follow-up TODOs:
 - 关键路径必须包含性能测试或性能验证任务。
 - 理由：防止生产环境性能退化。
 
+### 数据库规范
+
+- **所有数据表必须包含表注释**（`__table_args__ = {"comment": "表描述"}`），注释内容不得为空。
+- **所有字段必须包含字段注释**（`comment="字段描述"`），注释内容不得为空。
+- **主键 ID 必须使用 Long 类型**（SQLAlchemy 中使用 `BigInteger`），**严格禁止使用 UUID**。
+- 外键关联字段应在注释中说明关联关系和级联规则。
+- 枚举类型字段应在注释中说明各枚举值的含义。
+- 理由：确保数据库结构可维护、可理解，Long 类型主键更紧凑、顺序性好、利于分库分表。
+
 ### Windows 环境
 
 当前开发环境为 Windows。代码和脚本必须兼容 Windows 平台。理由：确保开发人员在
@@ -159,4 +164,4 @@ Windows 环境下正常工作，所有工具链和脚本都必须可执行。
 
 所有 PR、计划审查和实现审查都必须包含宪法合规检查结果。
 
-**Version**: 1.7.0 | **Ratified**: 2026-04-01 | **Last Amended**: 2026-04-07
+**Version**: 1.8.0 | **Ratified**: 2026-04-01 | **Last Amended**: 2026-04-12

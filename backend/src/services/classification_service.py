@@ -4,7 +4,6 @@
 协调分类、去重、规则引擎和AI模式的完整流程。
 """
 
-import uuid
 from collections import OrderedDict
 from datetime import datetime
 from typing import Optional
@@ -149,7 +148,7 @@ async def classify_logs(
                     estimated_remaining = None
 
                 session = db.query(ClassificationSession).filter(
-                    ClassificationSession.id == uuid.UUID(classification_session_id)
+                    ClassificationSession.id == int(classification_session_id)
                 ).first()
                 if session:
                     session.current_phase = phase
