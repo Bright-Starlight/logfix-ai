@@ -180,19 +180,19 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    P["AnalysisPipeline页面"]
-    F1["FileUpload"]
-    F2["SplitConfig"]
-    F3["ResultList"]
-    F4["ClassificationModeSelect"]
-    F5["ProgressBar"]
-    F6["LogList"]
-    H1["useClassificationProgress"]
-    A1["POST upload"]
-    A2["POST split"]
-    A3["POST classification/start"]
-    A4["GET classification/progress"]
-    A5["GET logs"]
+    P[AnalysisPipeline页面]
+    F1[FileUpload]
+    F2[SplitConfig]
+    F3[ResultList]
+    F4[ClassificationModeSelect]
+    F5[ProgressBar]
+    F6[LogList]
+    H1[useClassificationProgress]
+    A1[POST upload]
+    A2[POST split]
+    A3[POST classification/start]
+    A4[GET classification/progress]
+    A5[GET logs]
 
     P --> F1
     P --> F2
