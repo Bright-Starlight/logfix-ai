@@ -263,5 +263,51 @@ export interface SSEDoneEvent {
 
 export interface ClassificationStartRequest {
   split_session_id: string
-  mode: 'ai'
+  mode: ClassificationMode
+}
+
+// ============ 004-ai-tool-call-streaming 新增类型 ============
+
+export type ClassificationMode = 'rule_engine' | 'ai'
+
+export interface ClassificationStartResponse {
+  session_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+}
+
+export interface ClassificationProgressResponse {
+  session_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_items: number
+  processed_items: number
+  current_phase: string
+  estimated_remaining_seconds?: number
+  progress_percent: number
+}
+
+export interface ClassificationResultResponse {
+  session_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_items: number
+  processed_items: number
+  new_entries: number
+  duplicates: number
+  ignored: number
+  completed_at?: string
+}
+
+// 用于 ProgressBar 组件的状态类型
+export interface ClassificationProgressState {
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  totalItems: number
+  processedItems: number
+  currentPhase: string
+  estimatedRemainingSeconds?: number
+  progressPercent: number
+  error?: string
+  result?: {
+    new_entries: number
+    duplicates: number
+    ignored: number
+  }
 }

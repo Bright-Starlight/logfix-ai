@@ -27,7 +27,7 @@ _semaphore: Optional[asyncio.Semaphore] = None
 # 默认配置
 DEFAULT_MAX_CONCURRENT = 5
 DEFAULT_BATCH_SIZE = 100
-MAX_BATCH_SIZE = 20  # 限制批次大小防止上下文溢出（每条日志产生2条消息：user + assistant）
+MAX_BATCH_SIZE = 100  # 限制批次大小防止上下文溢出（每条日志产生2条消息：user + assistant）
 
 
 def get_default_config() -> dict:
@@ -60,7 +60,7 @@ async def get_client() -> AsyncOpenAI:
         _client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
-            timeout=30.0,
+            timeout=600.0,
             max_retries=3,
         )
         _logger.info(f"OpenAI 客户端初始化完成, base_url={base_url}")
@@ -101,21 +101,24 @@ def get_semaphore() -> asyncio.Semaphore:
 
 # Tool Call Schema
 CLASSIFY_LOG_TOOL_SCHEMA = {
-    "name": "classify_log",
-    "description": "对单条日志进行结构化分类，返回分类结果",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "log_entry": {
-                "type": "string",
-                "description": "原始日志条目",
+    "type": "function",
+    "function": {
+        "name": "classify_log",
+        "description": "对单条日志进行结构化分类，返回分类结果",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "log_entry": {
+                    "type": "string",
+                    "description": "原始日志条目",
+                },
+                "index": {
+                    "type": "integer",
+                    "description": "日志在列表中的索引",
+                },
             },
-            "index": {
-                "type": "integer",
-                "description": "日志在列表中的索引",
-            },
+            "required": ["log_entry", "index"],
         },
-        "required": ["log_entry", "index"],
     },
 }
 

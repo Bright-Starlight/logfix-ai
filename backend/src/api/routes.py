@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, UploadFile, Form, Query, Request
+from fastapi import APIRouter, File, UploadFile, Form, Query, Request, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import func
@@ -931,7 +931,7 @@ async def delete_ignore_rule(rule_id: str):
 
 
 @router.post("/classification/start")
-async def start_classification(request: ClassificationStartRequest):
+async def start_classification(request: ClassificationStartRequest, background_tasks: BackgroundTasks):
     """启动分类处理流程"""
     try:
         session_id = None
@@ -987,11 +987,9 @@ async def start_classification(request: ClassificationStartRequest):
         # 在响应返回后异步执行分类
         # 注意：上面的 db session 已关闭，下面的分类任务会使用自己的 session
         if session_id:
-            import asyncio
-            # 注意：fire-and-forget 模式，服务器重启时任务会丢失
-            # 生产环境建议使用后台任务队列（Celery/RQ）或 FastAPI BackgroundTasks
-            logger.warning(f"启动异步分类任务（fire-and-forget）: session_id={session_id}")
-            asyncio.create_task(run_classification_async(session_id, request.split_session_id, request.mode))
+            logger.warning(f"启动异步分类任务: session_id={session_id}")
+            # 使用 BackgroundTasks 确保任务被正确调度和执行
+            background_tasks.add_task(run_classification_async, session_id, request.split_session_id, request.mode)
 
         return make_response({
             "session_id": session_id,
@@ -1011,6 +1009,14 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
     from backend.src.db.session import get_db_session
 
     try:
+        # 获取切分结果
+        with get_db_session() as db:
+            split_results = db.query(SplitResult).filter(
+                SplitResult.session_id == uuid.UUID(split_session_id)
+            ).all()
+            logs = [result.content for result in split_results]
+            total_items = len(logs)
+
         # 更新状态为处理中
         with get_db_session() as db:
             session = db.query(ClassificationSession).filter(
@@ -1018,18 +1024,12 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
             ).first()
             if session:
                 session.status = "processing"
+                session.current_phase = "处理中"
+                session.total_items = total_items
+                session.processed_items = 0
                 db.commit()
 
-        # 获取切分结果
-        with get_db_session() as db:
-            split_results = db.query(SplitResult).filter(
-                SplitResult.session_id == uuid.UUID(split_session_id)
-            ).all()
-
-            logs = [result.content for result in split_results]
-
         # 在线程池中执行 CPU 密集型的分类任务，避免阻塞 event loop
-        result = None
         result = await asyncio.to_thread(
             _run_classification_sync,
             session_id,
@@ -1045,9 +1045,13 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
                     ClassificationSession.id == uuid.UUID(session_id)
                 ).first()
                 if session:
+                    session.status = "completed"
+                    session.current_phase = "已完成"
+                    session.processed_items = result.get("processed", 0)
                     session.new_entries = result.get("new_entries", 0)
                     session.duplicates = result.get("duplicates", 0)
                     session.ignored = result.get("ignored", 0)
+                    session.completed_at = datetime.now()
                     db.commit()
 
     except Exception as e:
@@ -1060,6 +1064,7 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
                 ).first()
                 if session:
                     session.status = "failed"
+                    session.current_phase = "失败"
                     session.error_message = str(e)
                     db.commit()
         except:

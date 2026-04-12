@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
-import { getSplitResults, getChunkDetail, startClassification } from '../services/api'
-import { useClassificationProgress } from '../hooks/useClassificationProgress'
+import { getSplitResults, getChunkDetail, startClassification, getClassificationProgress, getClassificationResult } from '../services/api'
 import ClassificationModeSelect from './ClassificationModeSelect'
 import ProgressBar from './ProgressBar'
-import type { ResultsResponse, SplitResult, ClassificationMode } from '../types'
+import type { ResultsResponse, SplitResult, ClassificationMode, ClassificationProgressState } from '../types'
 
 interface ResultListProps {
   sessionId: string
@@ -23,8 +22,52 @@ export default function ResultList({ sessionId }: ResultListProps) {
   const [isClassifying, setIsClassifying] = useState(false)
   const [showModeSelect, setShowModeSelect] = useState(true)
   const [classificationError, setClassificationError] = useState<string | null>(null)
+  const [classificationProgress, setClassificationProgress] = useState<ClassificationProgressState | null>(null)
 
-  const classificationProgress = useClassificationProgress(classificationSessionId)
+  // Poll for classification progress
+  useEffect(() => {
+    if (!classificationSessionId) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await getClassificationProgress(classificationSessionId)
+        if (response.success && response.data) {
+          const newStatus = response.data.status
+          let resultData = undefined
+
+          // 如果已完成，获取结果摘要
+          if (newStatus === 'completed') {
+            const resultResponse = await getClassificationResult(classificationSessionId)
+            if (resultResponse.success && resultResponse.data) {
+              resultData = {
+                new_entries: resultResponse.data.new_entries,
+                duplicates: resultResponse.data.duplicates,
+                ignored: resultResponse.data.ignored,
+              }
+            }
+          }
+
+          setClassificationProgress({
+            status: newStatus,
+            totalItems: response.data.total_items,
+            processedItems: response.data.processed_items,
+            currentPhase: response.data.current_phase || '处理中',
+            estimatedRemainingSeconds: response.data.estimated_remaining_seconds ?? undefined,
+            progressPercent: response.data.progress_percent,
+            result: resultData,
+          })
+          // 如果已完成或失败，停止轮询
+          if (newStatus === 'completed' || newStatus === 'failed') {
+            clearInterval(pollInterval)
+          }
+        }
+      } catch (err) {
+        console.error('获取分类进度失败:', err)
+      }
+    }, 2000)
+
+    return () => clearInterval(pollInterval)
+  }, [classificationSessionId])
 
   useEffect(() => {
     const fetchResults = async () => {
@@ -76,10 +119,9 @@ export default function ResultList({ sessionId }: ResultListProps) {
       setClassificationError(null)
       setIsClassifying(true)
 
-      // Start classification
       const response = await startClassification({
         split_session_id: sessionId,
-        mode,
+        mode: mode,
       })
 
       if (response.success && response.data) {
@@ -114,7 +156,6 @@ export default function ResultList({ sessionId }: ResultListProps) {
     return null
   }
 
-  // Show classification UI after split is complete
   return (
     <div className="result-list">
       <h2>切分结果</h2>
@@ -140,7 +181,7 @@ export default function ResultList({ sessionId }: ResultListProps) {
       )}
 
       {/* Progress Bar */}
-      {classificationSessionId && (
+      {classificationSessionId && classificationProgress && (
         <div className="classification-progress-section">
           <ProgressBar progress={classificationProgress} onRetry={handleRetry} />
         </div>

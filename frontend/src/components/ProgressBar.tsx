@@ -1,4 +1,4 @@
-import type { ClassificationProgressState } from '../hooks/useClassificationProgress'
+import type { ClassificationProgressState } from '../types'
 
 interface ProgressBarProps {
   progress: ClassificationProgressState

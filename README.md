@@ -36,11 +36,12 @@ npm install
 
 ### 启动服务
 
-**后端** (端口 8000):
+**后端** (端口 8000，需在项目根目录运行):
 
 ```bash
-cd backend
-python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+# 从项目根目录运行
+cd D:/code/logfix-ai
+python -m uvicorn backend.src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **前端** (端口 5173):
@@ -50,17 +51,19 @@ cd frontend
 npm run dev
 ```
 
+> 注意：启动后端前需确保 PostgreSQL 数据库已运行，并配置好 `.env` 文件中的 `DATABASE_URL` 和 `MINIMAX_API_KEY`。
+
 ### 环境变量配置
 
-在项目根目录创建 `.env` 文件：
+在 `backend/` 目录创建 `.env` 文件：
 
 ```bash
 # 数据库
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/logfix_ai
+DATABASE_URL=postgresql://vitacare:vitacare@localhost:5432/logfix_ai
 
 # MiniMax API
 MINIMAX_API_KEY=your_api_key_here
-MINIMAX_API_HOST=https://api.minimaxaxi.com/v1
+MINIMAX_API_HOST=https://api.minimaxi.com/v1
 
 # AI 配置
 AI_MAX_CONCURRENT=5

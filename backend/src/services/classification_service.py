@@ -96,7 +96,8 @@ async def classify_logs(
     db: Session,
     logs: list[str],
     mode: str = "rule_engine",
-    file_id: Optional[str] = None
+    file_id: Optional[str] = None,
+    classification_session_id: Optional[str] = None,
 ) -> dict:
     """
     分类日志条目
@@ -106,6 +107,7 @@ async def classify_logs(
         logs: 日志条目列表
         mode: 处理模式 (rule_engine 或 ai)
         file_id: 来源文件ID
+        classification_session_id: 可选的分类会话ID，用于进度更新
 
     Returns:
         分类结果字典
@@ -122,9 +124,45 @@ async def classify_logs(
     processed = 0
     new_entries = 0
     duplicates = 0
+    ignored_count = 0
     entries = []
     _ai_results: Optional[list] = None  # AI 批量结果缓存
     _ai_error: Optional[str] = None      # AI 错误信息缓存
+    total = len(logs)
+    start_time = datetime.now()
+
+    # 进度更新间隔：每处理 5% 或每条日志（取较大值）
+    update_interval = max(1, total // 20) if total > 0 else 1
+
+    # 更新当前阶段
+    def update_progress(phase: str, processed: int):
+        if classification_session_id:
+            try:
+                ClassificationSession = __import__(
+                    "backend.src.models.entities",
+                    fromlist=["ClassificationSession"]
+                ).ClassificationSession
+                elapsed = (datetime.now() - start_time).total_seconds()
+                if processed > 0:
+                    avg_time_per_item = elapsed / processed
+                    remaining_items = total - processed
+                    estimated_remaining = int(avg_time_per_item * remaining_items)
+                else:
+                    estimated_remaining = None
+
+                session = db.query(ClassificationSession).filter(
+                    ClassificationSession.id == uuid.UUID(classification_session_id)
+                ).first()
+                if session:
+                    session.current_phase = phase
+                    session.processed_items = processed
+                    session.estimated_remaining_seconds = estimated_remaining
+                    db.commit()
+            except Exception as e:
+                _logger.warning(f"更新进度失败: {e}")
+
+    # 初始阶段：去重检测
+    update_progress("去重检测中", 0)
 
     for log_entry in logs:
         processed += 1
@@ -132,6 +170,7 @@ async def classify_logs(
         # 检查忽略规则
         ignored, matched_rule = should_ignore(log_entry, ignore_rules)
         if ignored:
+            ignored_count += 1
             _logger.debug(f"日志被忽略: {matched_rule.get('name')}")
             continue
 
@@ -169,9 +208,10 @@ async def classify_logs(
             # 注意：AI 分析已在循环外批量调用，这里直接使用结果
             if _ai_results is None:
                 # 首次进入 AI 模式，预获取 AI 结果
+                update_progress("AI 分析中", processed - 1)
                 _ai_results, _ai_error = await analyze_logs_ai(logs)
                 if _ai_error:
-                    _logger.error(f"AI 分析失败: {ai_error}")
+                    _logger.error(f"AI 分析失败: {_ai_error}")
 
             if _ai_results:
                 # 使用 AI 结果查找对应索引
@@ -196,6 +236,7 @@ async def classify_logs(
             extracted_params = {}
 
         # 去重检查
+        update_progress("分类分析中", processed)
         existing = find_duplicate_entry(normalized, db)
         if existing:
             # 更新重复记录
@@ -215,6 +256,7 @@ async def classify_logs(
             })
         else:
             # 创建新记录
+            update_progress("存储中", processed)
             category = get_or_create_category(db, category_name)
 
             entry = LogEntry(
@@ -249,13 +291,22 @@ async def classify_logs(
                 "last_seen_at": entry.last_seen_at,
             })
 
+        # 定期更新分类会话进度
+        if classification_session_id and processed % update_interval == 0:
+            update_progress("处理中", processed)
+
+    # 最终进度更新（确保最后一次进度被保存）
+    if classification_session_id and processed > 0:
+        update_progress("已完成", processed)
+
     _logger.info(
-        f"分类完成: processed={processed}, new={new_entries}, duplicates={duplicates}"
+        f"分类完成: processed={processed}, new={new_entries}, duplicates={duplicates}, ignored={ignored_count}"
     )
 
     return {
         "processed": processed,
         "new_entries": new_entries,
         "duplicates": duplicates,
+        "ignored": ignored_count,
         "entries": entries,
     }
