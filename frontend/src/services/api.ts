@@ -27,6 +27,8 @@ import type {
   ClassificationStartResponse,
   ClassificationProgressResponse,
   ClassificationResultResponse,
+  // 006-repo-import 新增
+  RepoInfoResponse,
 } from '../types'
 
 const api = axios.create({
@@ -237,6 +239,56 @@ export const getClassificationResult = async (
 ): Promise<ApiResponse<ClassificationResultResponse>> => {
   const response = await api.get<ApiResponse<ClassificationResultResponse>>(`/classification/${sessionId}/result`)
   return response.data
+}
+
+// ============ 006-repo-import 仓库导入 API ============
+
+export const repoApi = {
+  validate: async (
+    type: 'local' | 'github',
+    path: string,
+    githubToken?: string
+  ): Promise<RepoInfoResponse> => {
+    const headers: Record<string, string> = {}
+    if (githubToken) {
+      headers['X-Github-Token'] = githubToken
+    }
+    const response = await api.post<RepoInfoResponse>('/repo/validate', { type, path }, { headers })
+    return response.data
+  },
+
+  import: async (
+    type: 'local' | 'github',
+    path: string,
+    name: string,
+    githubToken?: string,
+    localClonePath?: string
+  ): Promise<RepoInfoResponse> => {
+    const headers: Record<string, string> = {}
+    if (githubToken) {
+      headers['X-Github-Token'] = githubToken
+    }
+    const response = await api.post<RepoInfoResponse>('/repo/import', {
+      type,
+      path,
+      name,
+      local_clone_path: localClonePath,
+    }, { headers })
+    return response.data
+  },
+
+  getCurrent: async (): Promise<RepoInfoResponse> => {
+    const response = await api.get<RepoInfoResponse>('/repo/current')
+    return response.data
+  },
+
+  selectFolder: async (): Promise<{ path: string | null }> => {
+    const response = await api.post<{ success: boolean; data?: { path: string | null }; error?: { code: string; message: string } }>('/dialog/select-folder')
+    if (response.data.success && response.data.data) {
+      return { path: response.data.data.path }
+    }
+    throw new Error(response.data.error?.message || '选择文件夹失败')
+  },
 }
 
 export default api

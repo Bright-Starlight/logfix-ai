@@ -284,3 +284,39 @@ class ClassificationResultResponse(BaseModel):
     duplicates: int
     ignored: int
     completed_at: Optional[str] = None
+
+
+# ============ 006-repo-import 新增 Schema ============
+
+
+class RepoValidateRequest(BaseModel):
+    """仓库验证请求"""
+    type: str = Field(..., pattern="^(local|github)$", description="仓库来源类型")
+    path: str = Field(..., description="本地绝对路径 或 GitHub URL (owner/repo)")
+
+
+class RepoImportRequest(BaseModel):
+    """仓库导入请求"""
+    type: str = Field(..., pattern="^(local|github)$", description="仓库来源类型")
+    path: str = Field(..., description="本地绝对路径（本地仓库）或 GitHub URL（GitHub 仓库）")
+    name: str = Field(..., description="仓库名称")
+    description: Optional[str] = Field(None, description="GitHub 仓库描述（验证时获取）")
+    local_clone_path: Optional[str] = Field(None, description="GitHub 仓库克隆到的本地目录")
+
+
+class RepoInfoData(BaseModel):
+    """仓库信息数据"""
+    id: str
+    type: str
+    local_path: str
+    remote_url: Optional[str] = None
+    name: str
+    description: Optional[str] = None
+    imported_at: str
+
+
+class RepoInfoResponse(BaseModel):
+    """仓库信息响应"""
+    success: bool
+    data: Optional[RepoInfoData] = None
+    error: Optional[dict] = None

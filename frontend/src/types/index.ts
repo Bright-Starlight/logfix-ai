@@ -311,3 +311,46 @@ export interface ClassificationProgressState {
     ignored: number
   }
 }
+
+// ============ 006-repo-import 新增类型 ============
+
+export interface RepoValidateRequest {
+  type: 'local' | 'github'
+  path: string
+}
+
+export interface RepoImportRequest {
+  type: 'local' | 'github'
+  path: string
+  name: string
+  local_clone_path?: string
+}
+
+export interface RepoInfoData {
+  id: string
+  type: 'local' | 'github'
+  local_path: string
+  remote_url?: string
+  name: string
+  description?: string
+  imported_at: string
+}
+
+export interface RepoInfoResponse {
+  success: boolean
+  data: RepoInfoData | null
+  error: {
+    code: string
+    message: string
+  } | null
+}
+
+// RepoInfo 类型 - 用于组件内部状态
+export interface RepoInfo {
+  type: 'local' | 'github'
+  local_path: string
+  remote_url?: string
+  name: string
+  description?: string
+  imported_at: string
+}

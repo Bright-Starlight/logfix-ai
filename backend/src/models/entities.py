@@ -279,3 +279,51 @@ class TokenUsage(Base):
 
     def __repr__(self) -> str:
         return f"<TokenUsage(id={self.id}, method={self.method}, total_tokens={self.total_tokens})>"
+
+
+# ============ 006-repo-import 新增实体 ============
+
+
+class Repository(Base):
+    """仓库实体"""
+
+    __tablename__ = "repositories"
+    __table_args__ = {"comment": "仓库表，记录用户导入的代码仓库信息"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="主键ID")
+    source_type = Column(String(16), nullable=False, comment="来源类型：local/github")
+    name = Column(String(255), nullable=False, comment="仓库名称")
+    description = Column(Text, nullable=True, comment="仓库描述（GitHub 仓库时填充）")
+    local_path = Column(String(1024), nullable=False, comment="本地绝对路径（本地仓库为原始路径，GitHub 仓库为克隆目标路径）")
+    remote_url = Column(String(1024), nullable=True, comment="远程地址（GitHub 仓库的原始 URL）")
+    is_valid = Column(Boolean, default=True, comment="仓库是否有效")
+    created_at = Column(DateTime, nullable=False, default=datetime.now, comment="创建时间")
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now, comment="更新时间")
+
+    import_sessions: Mapped[List["ImportSession"]] = relationship("ImportSession", back_populates="repository")
+
+    def __repr__(self) -> str:
+        return f"<Repository(id={self.id}, name={self.name}, source_type={self.source_type})>"
+
+
+class ImportSession(Base):
+    """导入会话实体"""
+
+    __tablename__ = "import_sessions"
+    __table_args__ = (
+        Index("ix_import_sessions_repo_id", "repo_id"),
+        Index("ix_import_sessions_status", "status"),
+        {"comment": "导入会话表，记录每次仓库导入操作的上下文和结果"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="主键ID")
+    repo_id = Column(BigInteger, ForeignKey("repositories.id"), nullable=False, comment="关联的仓库ID")
+    source_type = Column(String(16), nullable=False, comment="导入来源类型：local/github")
+    status = Column(String(16), nullable=False, default="pending", comment="状态：pending/success/failed")
+    error_message = Column(Text, nullable=True, comment="失败时的错误信息")
+    created_at = Column(DateTime, nullable=False, default=datetime.now, comment="创建时间")
+
+    repository: Mapped["Repository"] = relationship("Repository", back_populates="import_sessions")
+
+    def __repr__(self) -> str:
+        return f"<ImportSession(id={self.id}, repo_id={self.repo_id}, status={self.status})>"
