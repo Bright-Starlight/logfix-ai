@@ -15,6 +15,26 @@ export interface FilePreviewResponse {
   encoding: string
 }
 
+export interface FileListItem {
+  id: string
+  filename: string
+  file_size: number
+  encoding: string
+  created_at: string
+}
+
+export interface SessionListItem {
+  id: string
+  file_id: string
+  rule_type: string
+  rule_content: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_chunks: number
+  processed_chunks: number
+  has_classification: boolean
+  created_at: string
+}
+
 export interface SplitRequest {
   file_id: string
   rule_type: 'regex' | 'fixed_string'
@@ -211,14 +231,44 @@ export interface CreateIgnoreRuleRequest {
   enabled?: boolean
 }
 
-// ============ 003-log-analysis-pipeline 新增类型 ============
+// ============ 004-ai-tool-call-streaming SSE 类型 ============
 
-export type ClassificationMode = 'rule_engine' | 'ai'
+export interface SSEProgressEvent {
+  processed: number
+  total: number
+  percentage: number
+}
+
+export interface SSEResultEvent {
+  index: number
+  category: string
+  error_type?: string
+  normalized_message: string
+  extracted_params: Record<string, unknown>
+}
+
+export interface SSEErrorEvent {
+  code: string
+  message: string
+  index?: number
+  processed_at_cancel?: number
+  batch?: number
+}
+
+export interface SSEDoneEvent {
+  total_processed: number
+  success_count: number
+  error_count: number
+}
 
 export interface ClassificationStartRequest {
   split_session_id: string
   mode: ClassificationMode
 }
+
+// ============ 004-ai-tool-call-streaming 新增类型 ============
+
+export type ClassificationMode = 'rule_engine' | 'ai'
 
 export interface ClassificationStartResponse {
   session_id: string
@@ -230,7 +280,7 @@ export interface ClassificationProgressResponse {
   status: 'pending' | 'processing' | 'completed' | 'failed'
   total_items: number
   processed_items: number
-  current_phase?: string
+  current_phase: string
   estimated_remaining_seconds?: number
   progress_percent: number
 }
@@ -244,4 +294,20 @@ export interface ClassificationResultResponse {
   duplicates: number
   ignored: number
   completed_at?: string
+}
+
+// 用于 ProgressBar 组件的状态类型
+export interface ClassificationProgressState {
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  totalItems: number
+  processedItems: number
+  currentPhase: string
+  estimatedRemainingSeconds?: number
+  progressPercent: number
+  error?: string
+  result?: {
+    new_entries: number
+    duplicates: number
+    ignored: number
+  }
 }

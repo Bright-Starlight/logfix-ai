@@ -1,144 +1,178 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { getClassificationProgress, getClassificationResult } from '../services/api'
-import type { ClassificationResultResponse } from '../types'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import type {
+  SSEProgressEvent,
+  SSEResultEvent,
+  SSEErrorEvent,
+  SSEDoneEvent,
+  ClassificationStartRequest,
+} from '../types'
 
-export type ClassificationStatus = 'pending' | 'processing' | 'completed' | 'failed'
-
-export interface ClassificationProgressState {
-  status: ClassificationStatus
-  totalItems: number
-  processedItems: number
-  currentPhase: string | undefined
-  estimatedRemainingSeconds: number | undefined
-  progressPercent: number
-  result: ClassificationResultResponse | null
-  error: string | null
+interface UseClassificationProgressOptions {
+  onProgress?: (data: SSEProgressEvent) => void
+  onResult?: (data: SSEResultEvent) => void
+  onError?: (data: SSEErrorEvent) => void
+  onDone?: (data: SSEDoneEvent) => void
 }
 
-const POLLING_INTERVAL = 2000 // 2 seconds
+interface UseClassificationProgressReturn {
+  isConnected: boolean
+  progress: SSEProgressEvent | null
+  results: SSEResultEvent[]
+  error: SSEErrorEvent | null
+  done: SSEDoneEvent | null
+  startStream: (request: ClassificationStartRequest) => void
+  cancel: () => void
+}
 
-export function useClassificationProgress(sessionId: string | null) {
-  const [state, setState] = useState<ClassificationProgressState>({
-    status: 'pending',
-    totalItems: 0,
-    processedItems: 0,
-    currentPhase: undefined,
-    estimatedRemainingSeconds: undefined,
-    progressPercent: 0,
-    result: null,
-    error: null,
-  })
+export function useClassificationProgress(
+  options: UseClassificationProgressOptions = {}
+): UseClassificationProgressReturn {
+  const { onProgress, onResult, onError, onDone } = options
 
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const isMountedRef = useRef(true)
+  const [isConnected, setIsConnected] = useState(false)
+  const [progress, setProgress] = useState<SSEProgressEvent | null>(null)
+  const [results, setResults] = useState<SSEResultEvent[]>([])
+  const [error, setError] = useState<SSEErrorEvent | null>(null)
+  const [done, setDone] = useState<SSEDoneEvent | null>(null)
 
-  const stopPolling = useCallback(() => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current)
-      pollingRef.current = null
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  const cancel = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
     }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    setIsConnected(false)
   }, [])
 
-  const fetchProgress = useCallback(async () => {
-    if (!sessionId) return
+  const startStream = useCallback(
+    (request: ClassificationStartRequest) => {
+      // 清理之前的连接
+      cancel()
 
-    try {
-      const response = await getClassificationProgress(sessionId)
+      // 重置状态
+      setProgress(null)
+      setResults([])
+      setError(null)
+      setDone(null)
 
-      if (!isMountedRef.current) return
+      // 创建 EventSource
+      // 注意：EventSource 不支持 POST 请求，我们使用 fetch + ReadableStream
+      abortControllerRef.current = new AbortController()
 
-      if (response.success && response.data) {
-        const data = response.data
-        setState((prev) => ({
-          ...prev,
-          status: data.status as ClassificationStatus,
-          totalItems: data.total_items,
-          processedItems: data.processed_items,
-          currentPhase: data.current_phase,
-          estimatedRemainingSeconds: data.estimated_remaining_seconds,
-          progressPercent: data.progress_percent,
-          error: null,
-        }))
+      const fetchSSE = async () => {
+        try {
+          setIsConnected(true)
 
-        // Stop polling if completed or failed
-        if (data.status === 'completed' || data.status === 'failed') {
-          stopPolling()
+          const response = await fetch('/api/classify/stream', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(request),
+            signal: abortControllerRef.current?.signal,
+          })
 
-          // Fetch final result if completed
-          if (data.status === 'completed') {
-            try {
-              const resultResponse = await getClassificationResult(sessionId)
-              if (isMountedRef.current && resultResponse.success && resultResponse.data) {
-                setState((prev) => ({
-                  ...prev,
-                  result: resultResponse.data,
-                }))
+          if (!response.ok) {
+            throw new Error(`HTTP error: ${response.status}`)
+          }
+
+          const reader = response.body?.getReader()
+          if (!reader) {
+            throw new Error('No response body')
+          }
+
+          const decoder = new TextDecoder()
+          let buffer = ''
+          let currentEvent = ''
+          let currentData = ''
+
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+
+            // 按 SSE 格式解析（event: xxx\ndata: yyy\n\n）
+            // 匹配 event: 类型
+            const eventMatch = buffer.match(/^event: (\w+)\n/m)
+            if (eventMatch) {
+              currentEvent = eventMatch[1]
+            }
+
+            // 匹配 data: 内容（直到双换行或字符串结尾）
+            const dataMatch = buffer.match(/^data: (.+?)\n\n/ms)
+            if (dataMatch) {
+              currentData = dataMatch[1]
+              buffer = buffer.slice(dataMatch[0].length)
+
+              try {
+                const parsedData = JSON.parse(currentData)
+
+                if (currentEvent === 'progress' && parsedData.processed !== undefined) {
+                  setProgress(parsedData)
+                  onProgress?.(parsedData)
+                } else if (currentEvent === 'result' && parsedData.index !== undefined) {
+                  setResults((prev) => [...prev, parsedData])
+                  onResult?.(parsedData)
+                } else if (currentEvent === 'error') {
+                  setError(parsedData)
+                  onError?.(parsedData)
+                } else if (currentEvent === 'done') {
+                  setDone(parsedData)
+                  onDone?.(parsedData)
+                }
+              } catch {
+                // Ignore parse errors for incomplete data
               }
-            } catch {
-              // Result fetch is optional, ignore errors
+
+              // Reset
+              currentEvent = ''
+              currentData = ''
             }
           }
+        } catch (err) {
+          if ((err as Error).name === 'AbortError') {
+            // Cancelled
+          } else {
+            setError({
+              code: 'NETWORK_ERROR',
+              message: (err as Error).message || 'Network error',
+            })
+            onError?.({
+              code: 'NETWORK_ERROR',
+              message: (err as Error).message || 'Network error',
+            })
+          }
+        } finally {
+          setIsConnected(false)
         }
-      } else if (response.error) {
-        setState((prev) => ({
-          ...prev,
-          error: response.error?.message || '获取进度失败',
-        }))
-        stopPolling()
       }
-    } catch (err) {
-      if (!isMountedRef.current) return
 
-      setState((prev) => ({
-        ...prev,
-        error: err instanceof Error ? err.message : '获取进度失败',
-      }))
-      stopPolling()
-    }
-  }, [sessionId, stopPolling])
+      fetchSSE()
+    },
+    [cancel, onProgress, onResult, onError, onDone]
+  )
 
-  // Start polling when sessionId is provided and status is pending or processing
+  // 清理 on unmount
   useEffect(() => {
-    if (!sessionId) {
-      setState({
-        status: 'pending',
-        totalItems: 0,
-        processedItems: 0,
-        currentPhase: undefined,
-        estimatedRemainingSeconds: undefined,
-        progressPercent: 0,
-        result: null,
-        error: null,
-      })
-      stopPolling()
-      return
-    }
-
-    isMountedRef.current = true
-
-    // Fetch immediately
-    fetchProgress()
-
-    // Start polling
-    pollingRef.current = setInterval(fetchProgress, POLLING_INTERVAL)
-
     return () => {
-      isMountedRef.current = false
-      stopPolling()
+      cancel()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId])
-
-  // Manual refresh function
-  const refresh = useCallback(() => {
-    if (sessionId) {
-      fetchProgress()
-    }
-  }, [sessionId, fetchProgress])
+  }, [cancel])
 
   return {
-    ...state,
-    refresh,
-    isPolling: pollingRef.current !== null,
+    isConnected,
+    progress,
+    results,
+    error,
+    done,
+    startStream,
+    cancel,
   }
 }

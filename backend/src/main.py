@@ -38,9 +38,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"数据库表创建失败: {e}")
 
+    # 模型预加载
+    try:
+        from backend.src.services.ai_analyzer import init_client
+        logger.info("模型预加载开始...")
+        await init_client()
+        logger.info("模型预加载完成, model=MiniMax-M2.7")
+    except Exception as e:
+        logger.error(f"模型预加载失败: {e}")
+
     yield
 
     # 关闭时
+    try:
+        from backend.src.services.ai_analyzer import close_client
+        await close_client()
+    except Exception as e:
+        logger.error(f"关闭 OpenAI 客户端失败: {e}")
+
     logger.info("应用关闭中...")
 
 

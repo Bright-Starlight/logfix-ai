@@ -696,6 +696,254 @@ body {
   margin-top: var(--space-2);
 }
 
+/* === Classification Stream === */
+.classification-stream {
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
+}
+
+.classification-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-5);
+}
+
+.classification-header h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.classification-select {
+  margin-bottom: var(--space-5);
+}
+
+.classification-select label {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.session-select {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  font-size: 0.9375rem;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.session-select:hover {
+  border-color: var(--border-default);
+}
+
+.session-select:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.classification-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.start-classify-button {
+  flex: 1;
+  padding: var(--space-3) var(--space-5);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: white;
+  background: var(--accent-primary);
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.start-classify-button:hover:not(:disabled) {
+  background: var(--accent-primary-hover);
+  transform: translateY(-1px);
+}
+
+.start-classify-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancel-button {
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cancel-button:hover {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.classification-empty {
+  text-align: center;
+  padding: var(--space-8);
+  color: var(--text-muted);
+}
+
+.classification-empty .hint {
+  font-size: 0.875rem;
+  margin-top: var(--space-2);
+}
+
+/* Classification Progress */
+.classification-progress {
+  margin-bottom: var(--space-5);
+}
+
+.classification-progress .progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-2);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.classification-progress .percentage {
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+
+/* Classification Results */
+.classification-results {
+  margin-bottom: var(--space-5);
+}
+
+.classification-results h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.results-list {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.result-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+}
+
+.result-category {
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: white;
+  border-radius: var(--radius-sm);
+}
+
+.result-message {
+  flex: 1;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-error-type {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Classification Done */
+.classification-done {
+  text-align: center;
+  padding: var(--space-5);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+}
+
+.classification-done h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--success);
+  margin-bottom: var(--space-3);
+}
+
+.done-stats {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-6);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+/* Classification Error */
+.classification-error {
+  text-align: center;
+  padding: var(--space-5);
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: var(--radius-lg);
+}
+
+.classification-error h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--error);
+  margin-bottom: var(--space-3);
+}
+
+.classification-error p {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.retry-button {
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--accent-primary);
+  background: transparent;
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.retry-button:hover {
+  background: var(--accent-primary);
+  color: white;
+}
+
 /* === Search Filter === */
 .search-filter {
   background: var(--bg-card);
@@ -1371,6 +1619,37 @@ body {
   background: var(--bg-hover);
   border-color: var(--accent-primary);
   color: var(--text-primary);
+}
+
+/* === AI Classify Entry Button === */
+.ai-classify-entry {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-6) 0;
+  margin-top: var(--space-4);
+  border: 1px dashed red;
+}
+
+.ai-classify-button {
+  padding: var(--space-4) var(--space-8);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  border: none;
+  border-radius: var(--radius-lg);
+  color: white;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-normal);
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.3);
+}
+
+.ai-classify-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 30px rgba(99, 102, 241, 0.4);
+}
+
+.ai-classify-button:active {
+  transform: translateY(0);
 }
 
 /* === Loading === */

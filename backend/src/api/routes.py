@@ -6,12 +6,14 @@ API 路由定义
 
 import os
 import uuid
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, UploadFile, Form, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, File, UploadFile, Form, Query, Request, BackgroundTasks
+from fastapi.responses import JSONResponse, StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -160,6 +162,31 @@ async def upload_file(
         return make_error("INTERNAL_ERROR", "文件上传失败", 500)
 
 
+@router.get("/files")
+async def list_files():
+    """获取所有已上传的文件列表"""
+    try:
+        with get_db_session() as db:
+            files = db.query(LogFile).order_by(LogFile.created_at.desc()).all()
+
+            return make_response({
+                "files": [
+                    {
+                        "id": str(f.id),
+                        "filename": f.filename,
+                        "file_size": f.file_size,
+                        "encoding": f.encoding,
+                        "created_at": f.created_at.isoformat(),
+                    }
+                    for f in files
+                ]
+            })
+
+    except Exception as e:
+        logger.error(f"获取文件列表失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取文件列表失败", 500)
+
+
 @router.get("/files/{file_id}")
 async def get_file_preview(
     file_id: str,
@@ -297,6 +324,35 @@ async def execute_split(request: SplitRequest):
         logger.error(f"切分失败: {e}")
         log_error("INTERNAL_ERROR", str(e), {"file_id": request.file_id})
         return make_error("INTERNAL_ERROR", "切分执行失败", 500)
+
+
+@router.get("/sessions")
+async def list_sessions():
+    """获取所有切分会话列表"""
+    try:
+        with get_db_session() as db:
+            sessions = db.query(SplitSession).order_by(SplitSession.created_at.desc()).all()
+
+            return make_response({
+                "sessions": [
+                    {
+                        "id": str(s.id),
+                        "file_id": str(s.file_id),
+                        "rule_type": s.rule_type,
+                        "rule_content": s.rule_content,
+                        "status": s.status,
+                        "total_chunks": s.total_chunks,
+                        "processed_chunks": s.processed_chunks,
+                        "has_classification": s.has_classification,
+                        "created_at": s.created_at.isoformat(),
+                    }
+                    for s in sessions
+                ]
+            })
+
+    except Exception as e:
+        logger.error(f"获取会话列表失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取会话列表失败", 500)
 
 
 @router.get("/sessions/{session_id}")
@@ -597,21 +653,31 @@ async def get_stats(
                     "percentage": round(percentage, 2),
                 })
 
-            # 每日趋势（最近7天）
+            # 每日趋势（最近7天）- 单次 GROUP BY 查询替代 N+1 循环
+            from datetime import timedelta
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            week_ago = today - timedelta(days=6)
+
+            daily_counts = db.query(
+                func.date(LogEntry.created_at).label("date"),
+                func.count(LogEntry.id).label("count")
+            ).filter(
+                LogEntry.created_at >= week_ago
+            ).group_by(
+                func.date(LogEntry.created_at)
+            ).all()
+
+            # 构建日期到数量的映射
+            count_map = {row.date: row.count for row in daily_counts}
+
+            # 生成完整7天数据（包含零值的日期）
             daily_trend = []
             for i in range(7):
-                day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                from datetime import timedelta
-                day = day - timedelta(days=i)
+                day = today - timedelta(days=i)
                 day_str = day.strftime("%Y-%m-%d")
-
-                count = query.filter(
-                    func.date(LogEntry.created_at) == day.date()
-                ).count()
-
                 daily_trend.append({
                     "date": day_str,
-                    "count": count,
+                    "count": count_map.get(day.date(), 0),
                 })
 
             daily_trend.reverse()
@@ -865,7 +931,7 @@ async def delete_ignore_rule(rule_id: str):
 
 
 @router.post("/classification/start")
-async def start_classification(request: ClassificationStartRequest):
+async def start_classification(request: ClassificationStartRequest, background_tasks: BackgroundTasks):
     """启动分类处理流程"""
     try:
         session_id = None
@@ -921,11 +987,9 @@ async def start_classification(request: ClassificationStartRequest):
         # 在响应返回后异步执行分类
         # 注意：上面的 db session 已关闭，下面的分类任务会使用自己的 session
         if session_id:
-            import asyncio
-            # 注意：fire-and-forget 模式，服务器重启时任务会丢失
-            # 生产环境建议使用后台任务队列（Celery/RQ）或 FastAPI BackgroundTasks
-            logger.warning(f"启动异步分类任务（fire-and-forget）: session_id={session_id}")
-            asyncio.create_task(run_classification_async(session_id, request.split_session_id, request.mode))
+            logger.warning(f"启动异步分类任务: session_id={session_id}")
+            # 使用 BackgroundTasks 确保任务被正确调度和执行
+            background_tasks.add_task(run_classification_async, session_id, request.split_session_id, request.mode)
 
         return make_response({
             "session_id": session_id,
@@ -945,6 +1009,14 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
     from backend.src.db.session import get_db_session
 
     try:
+        # 获取切分结果
+        with get_db_session() as db:
+            split_results = db.query(SplitResult).filter(
+                SplitResult.session_id == uuid.UUID(split_session_id)
+            ).all()
+            logs = [result.content for result in split_results]
+            total_items = len(logs)
+
         # 更新状态为处理中
         with get_db_session() as db:
             session = db.query(ClassificationSession).filter(
@@ -952,18 +1024,12 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
             ).first()
             if session:
                 session.status = "processing"
+                session.current_phase = "处理中"
+                session.total_items = total_items
+                session.processed_items = 0
                 db.commit()
 
-        # 获取切分结果
-        with get_db_session() as db:
-            split_results = db.query(SplitResult).filter(
-                SplitResult.session_id == uuid.UUID(split_session_id)
-            ).all()
-
-            logs = [result.content for result in split_results]
-
         # 在线程池中执行 CPU 密集型的分类任务，避免阻塞 event loop
-        result = None
         result = await asyncio.to_thread(
             _run_classification_sync,
             session_id,
@@ -979,9 +1045,13 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
                     ClassificationSession.id == uuid.UUID(session_id)
                 ).first()
                 if session:
+                    session.status = "completed"
+                    session.current_phase = "已完成"
+                    session.processed_items = result.get("processed", 0)
                     session.new_entries = result.get("new_entries", 0)
                     session.duplicates = result.get("duplicates", 0)
                     session.ignored = result.get("ignored", 0)
+                    session.completed_at = datetime.now()
                     db.commit()
 
     except Exception as e:
@@ -994,6 +1064,7 @@ async def run_classification_async(session_id: str, split_session_id: str, mode:
                 ).first()
                 if session:
                     session.status = "failed"
+                    session.current_phase = "失败"
                     session.error_message = str(e)
                     db.commit()
         except:
@@ -1006,22 +1077,19 @@ def _run_classification_sync(session_id: str, split_session_id: str, mode: str, 
     from backend.src.db.session import get_db_session
     import asyncio
 
-    # 创建新的 event loop 用于这个线程
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
+    async def _run_async():
+        """异步执行分类（供 asyncio.run 调用）"""
         with get_db_session() as db:
-            result = loop.run_until_complete(
-                classify_logs(
-                    db=db,
-                    logs=logs,
-                    mode=mode,
-                    classification_session_id=session_id,
-                )
+            return await classify_logs(
+                db=db,
+                logs=logs,
+                mode=mode,
+                classification_session_id=session_id,
             )
-        return result
-    finally:
-        loop.close()
+
+    # 使用 asyncio.run() 正确管理事件循环
+    # asyncio.run() 会在新线程中创建、运行、清理事件循环
+    return asyncio.run(_run_async())
 
 
 @router.get("/classification/{session_id}/progress")
@@ -1081,3 +1149,139 @@ async def get_classification_result(session_id: str):
     except Exception as e:
         logger.error(f"获取分类结果失败: {e}")
         return make_error("INTERNAL_ERROR", "获取分类结果失败", 500)
+
+
+# ============ 004-ai-tool-call-streaming SSE 流式端点 ============
+
+
+@router.post("/classify/stream")
+async def classify_logs_stream(request: Request, body: ClassificationStartRequest):
+    """
+    SSE 流式分类端点
+
+    通过 Server-Sent Events 实时推送处理进度和结构化结果。
+
+    事件类型:
+    - progress: 处理进度更新
+    - result: 单条分类结果
+    - error: 错误事件
+    - done: 处理完成
+
+    取消操作:
+    - 客户端关闭 EventSource 连接即可取消当前请求
+    - 服务器会检测客户端断开并中断处理
+    """
+    split_session_id = body.split_session_id
+
+    async def event_generator():
+        """SSE 事件生成器"""
+        _logger = get_logger("sse_stream")
+        cancelled = False
+        processed_at_cancel = 0
+
+        try:
+            from backend.src.services.ai_analyzer import stream_analyze_logs
+
+            # 获取日志内容
+            with get_db_session() as db:
+                split_results = db.query(SplitResult).filter(
+                    SplitResult.session_id == uuid.UUID(split_session_id)
+                ).all()
+                logs = [result.content for result in split_results]
+
+            if not logs:
+                _logger.warning(f"SSE 流式分类终止: 没有日志可处理, session_id={split_session_id}")
+                yield {
+                    "event": "error",
+                    "data": json.dumps({
+                        "code": "NO_LOGS",
+                        "message": "没有日志可处理",
+                    }),
+                }
+                return
+
+            _logger.info(f"SSE 流式分类开始, total={len(logs)}, session_id={split_session_id}")
+
+            # 流式处理
+            async for event in stream_analyze_logs(logs):
+                # 检测客户端是否已断开
+                if await request.is_disconnected():
+                    cancelled = True
+                    _logger.info(f"SSE 流式分类取消: 客户端断开, processed_at_cancel={processed_at_cancel}")
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({
+                            "code": "CANCELLED",
+                            "message": "用户取消",
+                            "processed_at_cancel": processed_at_cancel,
+                        }, ensure_ascii=False),
+                    }
+                    break
+
+                event_type = event["event"]
+                event_data = event["data"]
+
+                # 记录处理数量
+                if event_type == "progress":
+                    processed_at_cancel = event_data.get("processed", 0)
+
+                # SSE 推送日志
+                if event_type == "progress":
+                    _logger.debug(f"SSE 推送进度: processed={event_data.get('processed')}, total={event_data.get('total')}, percentage={event_data.get('percentage')}")
+                elif event_type == "result":
+                    _logger.debug(f"SSE 推送结果: index={event_data.get('index')}, category={event_data.get('category')}")
+                elif event_type == "error":
+                    _logger.warning(f"SSE 错误事件: code={event_data.get('code')}, message={event_data.get('message')}")
+                elif event_type == "done":
+                    _logger.info(f"SSE 处理完成: total_processed={event_data.get('total_processed')}, success_count={event_data.get('success_count')}, error_count={event_data.get('error_count')}")
+
+                yield {
+                    "event": event_type,
+                    "data": json.dumps(event_data, ensure_ascii=False),
+                }
+
+            if cancelled:
+                _logger.info(f"SSE 流式分类已取消, processed={processed_at_cancel}")
+
+        except Exception as e:
+            _logger.error(f"SSE 流式分类失败: {e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "code": "INTERNAL_ERROR",
+                    "message": str(e),
+                }, ensure_ascii=False),
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+# ============ 004-ai-tool-call-streaming Token 对比端点 ============
+
+
+@router.get("/token-usage/comparison")
+async def get_token_usage_comparison(
+    session_id: Optional[str] = Query(None, description="可选的分类会话 ID"),
+    user_id: Optional[str] = Query(None, description="可选的用户 ID"),
+):
+    """
+    获取 Token 消耗对比数据
+
+    对比 tool_call 和 prompt_engineering 两种方式的 token 消耗。
+    """
+    try:
+        with get_db_session() as db:
+            from backend.src.services.token_tracking import get_token_comparison
+
+            result = get_token_comparison(
+                db=db,
+                session_id=session_id,
+                user_id=user_id,
+            )
+
+            return make_response(result)
+
+    except Exception as e:
+        logger.error(f"获取 Token 对比失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取 Token 对比失败", 500)
+
