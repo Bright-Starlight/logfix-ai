@@ -5,7 +5,6 @@ Token 消耗追踪服务
 """
 
 import time
-import uuid
 from typing import Optional
 from dataclasses import dataclass
 from contextlib import contextmanager
@@ -84,7 +83,7 @@ class TokenTracker:
 
         token_usage = TokenUsage(
             user_id=self.user_id,
-            session_id=uuid.UUID(self.session_id) if self.session_id else None,
+            session_id=int(self.session_id) if self.session_id else None,
             method=method,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -169,7 +168,7 @@ def get_token_comparison(
     query = db.query(TokenUsage)
 
     if session_id:
-        query = query.filter(TokenUsage.session_id == uuid.UUID(session_id))
+        query = query.filter(TokenUsage.session_id == int(session_id))
     if user_id:
         query = query.filter(TokenUsage.user_id == user_id)
 
