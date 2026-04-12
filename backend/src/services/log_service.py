@@ -174,5 +174,59 @@ def log_ignore_rule_match(session_id: str, rule_name: str, pattern: str) -> None
     )
 
 
+# ============ 006-repo-import 新增日志函数 ============
+
+def log_repo_validate(
+    local_path: str,
+    source_type: str,
+    status: str,
+    error: str = None
+) -> None:
+    """
+    记录仓库验证操作日志
+
+    Args:
+        local_path: 本地路径或远程 URL
+        source_type: 来源类型 (local/github)
+        status: 验证状态 (success/failed)
+        error: 错误码（失败时）
+    """
+    if status == "success":
+        get_logger().info(
+            f"仓库验证: source_type={source_type}, local_path={local_path}, status={status}"
+        )
+    else:
+        get_logger().error(
+            f"仓库验证: source_type={source_type}, local_path={local_path}, status={status}, error={error}"
+        )
+
+
+def log_repo_import(
+    repo_id: int,
+    source_type: str,
+    local_path: str,
+    status: str,
+    error: str = None
+) -> None:
+    """
+    记录仓库导入操作日志
+
+    Args:
+        repo_id: 仓库 ID（导入成功后有值）
+        source_type: 来源类型 (local/github)
+        local_path: 本地路径
+        status: 导入状态 (success/failed)
+        error: 错误码（失败时）
+    """
+    if status == "success":
+        get_logger().info(
+            f"仓库导入: repo_id={repo_id}, source_type={source_type}, local_path={local_path}, status={status}"
+        )
+    else:
+        get_logger().error(
+            f"仓库导入: repo_id={repo_id}, source_type={source_type}, local_path={local_path}, status={status}, error={error}"
+        )
+
+
 # 初始化默认 logger
 setup_logging("DEBUG")

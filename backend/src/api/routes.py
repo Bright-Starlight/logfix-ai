@@ -43,12 +43,20 @@ from backend.src.api.schemas import (
     ClassificationStartResponse,
     ClassificationProgressResponse,
     ClassificationResultResponse,
+    # 006-repo-import 新增
+    RepoValidateRequest,
+    RepoImportRequest,
+    RepoInfoData,
+    RepoInfoResponse,
 )
 from backend.src.db.session import get_db_session
 from backend.src.models.entities import (
     LogFile, SplitSession, SplitResult,
     LogEntry, LogCategory, ParseRule, IgnoreRule, LogStatistics,
-    ClassificationSession
+    ClassificationSession,
+    # 006-repo-import 新增
+    Repository,
+    ImportSession,
 )
 from backend.src.services.file_handler import get_file_handler, FileHandler
 from backend.src.services.splitter import LogSplitter, validate_regex_pattern
@@ -57,17 +65,24 @@ from backend.src.services.log_service import (
     log_split_rule_applied,
     log_error,
     get_logger,
+    # 006-repo-import 新增
+    log_repo_validate,
+    log_repo_import,
 )
 from backend.src.services.classification_service import classify_logs
 from backend.src.services.rule_engine import validate_rule_syntax
 from backend.src.services.ignore_rule_service import validate_ignore_pattern
 from backend.src.utils.path import safe_filename
+from backend.src.utils.github import parse_github_owner_repo
 
 router = APIRouter(prefix="/api")
 logger = get_logger("routes")
 
 # 内容截断限制
 MAX_CONTENT_PREVIEW = 1000
+
+# 存储基础路径 - 使用项目根目录的绝对路径
+STORAGE_BASE_PATH = Path(__file__).parent.parent.parent / "storage"
 
 
 def make_response(data=None, error=None, status_code=200):
@@ -119,8 +134,8 @@ async def upload_file(
         # 生成文件ID
         file_id = upload_id or str(uuid.uuid4())
 
-        # 创建存储目录
-        storage_path = Path("storage") / file_id / safe_name
+        # 创建存储目录（使用绝对路径）
+        storage_path = STORAGE_BASE_PATH / file_id / safe_name
         storage_path.parent.mkdir(parents=True, exist_ok=True)
 
         # 保存文件
@@ -194,7 +209,10 @@ async def get_file_preview(
     """获取文件预览"""
     try:
         with get_db_session() as db:
-            log_file = db.query(LogFile).filter(LogFile.id == int(file_id)).first()
+            # file_id is UUID, stored as part of storage_path
+            # Query by storage_path pattern (Windows uses \ separator)
+            storage_pattern = f"%{file_id}%"
+            log_file = db.query(LogFile).filter(LogFile.storage_path.like(storage_pattern)).first()
 
             if not log_file:
                 return make_error("FILE_NOT_FOUND", "文件不存在", 404)
@@ -253,15 +271,16 @@ async def execute_split(request: SplitRequest):
 
         # 使用事务确保状态一致性
         with get_db_session() as db:
-            # 检查文件是否存在
-            log_file = db.query(LogFile).filter(LogFile.id == int(request.file_id)).first()
+            # file_id is UUID, query by storage_path pattern
+            storage_pattern = f"%{request.file_id}%"
+            log_file = db.query(LogFile).filter(LogFile.storage_path.like(storage_pattern)).first()
 
             if not log_file:
                 return make_error("FILE_NOT_FOUND", "文件不存在", 404)
 
             # 检查是否有进行中的切分任务
             existing = db.query(SplitSession).filter(
-                SplitSession.file_id == int(request.file_id),
+                SplitSession.file_id == log_file.id,
                 SplitSession.status.in_(["pending", "processing"])
             ).first()
 
@@ -281,7 +300,7 @@ async def execute_split(request: SplitRequest):
 
             # 创建切分会话（状态为 processing）
             session = SplitSession(
-                file_id=int(request.file_id),
+                file_id=log_file.id,
                 rule_type=request.rule_type,
                 rule_content=request.rule_content,
                 status="processing",
@@ -1283,4 +1302,198 @@ async def get_token_usage_comparison(
     except Exception as e:
         logger.error(f"获取 Token 对比失败: {e}")
         return make_error("INTERNAL_ERROR", "获取 Token 对比失败", 500)
+
+
+# ============ 006-repo-import 仓库导入端点 ============
+
+
+@router.post("/repo/validate", response_model=dict)
+async def validate_repo(request: RepoValidateRequest, req: Request):
+    """
+    验证仓库有效性
+
+    本地仓库: 检查路径存在、包含 .git 目录、有读取权限
+    GitHub 仓库: 检查 URL 格式、API 验证仓库存在性
+    """
+    try:
+        from backend.src.services.repo_service import validate_local_repo, validate_github_repo, get_current_repo
+
+        if request.type == "local":
+            result = validate_local_repo(request.path)
+            if result.is_valid:
+                log_repo_validate(request.path, "local", "success")
+                return make_response({
+                    "type": "local",
+                    "local_path": request.path,
+                    "name": result.repo_name,
+                    "is_valid": True,
+                })
+            else:
+                log_repo_validate(request.path, "local", "failed", result.error_code)
+                return make_error(result.error_code, result.error_message)
+        else:
+            # GitHub 仓库验证
+            # 从请求头获取 Token
+            github_token = req.headers.get("X-Github-Token")
+            # 解析 owner/repo 格式
+            owner, repo = parse_github_owner_repo(request.path)
+
+            result = validate_github_repo(owner, repo, github_token)
+            if result.is_valid:
+                log_repo_validate(request.path, "github", "success")
+                return make_response({
+                    "type": "github",
+                    "remote_url": result.remote_url,
+                    "name": result.repo_name,
+                    "description": result.description,
+                    "is_valid": True,
+                })
+            else:
+                log_repo_validate(request.path, "github", "failed", result.error_code)
+                return make_error(result.error_code, result.error_message)
+
+    except Exception as e:
+        logger.error(f"验证仓库失败: {e}")
+        log_repo_validate(request.path, request.type, "failed", "INTERNAL_ERROR")
+        return make_error("INTERNAL_ERROR", "验证仓库失败", 500)
+
+
+@router.post("/repo/import", response_model=dict)
+async def import_repo(request: RepoImportRequest, req: Request):
+    """
+    确认导入仓库
+
+    本地仓库: 直接记录到数据库
+    GitHub 仓库: 执行 git clone 后记录到数据库
+    """
+    try:
+        from backend.src.services.repo_service import import_local_repo, import_github_repo
+
+        if request.type == "local":
+            result = import_local_repo(request.path, request.name)
+            if result.success:
+                log_repo_import(result.repo_id, "local", request.path, "success")
+                return make_response({
+                    "id": str(result.repo_id),
+                    "type": "local",
+                    "local_path": request.path,
+                    "name": request.name,
+                    "imported_at": datetime.now().isoformat(),
+                })
+            else:
+                log_repo_import(None, "local", request.path, "failed", result.error_code)
+                return make_error(result.error_code, result.error_message)
+        else:
+            # GitHub 仓库导入
+            github_token = req.headers.get("X-Github-Token")
+            owner, repo = parse_github_owner_repo(request.path)
+
+            if not request.local_clone_path:
+                return make_error("INVALID_REQUEST", "GitHub 仓库导入必须指定克隆目标路径")
+
+            result = import_github_repo(owner, repo, request.local_clone_path, github_token, request.description)
+            if result.success:
+                log_repo_import(result.repo_id, "github", result.local_path, "success")
+                return make_response({
+                    "id": str(result.repo_id),
+                    "type": "github",
+                    "local_path": result.local_path,
+                    "remote_url": request.path,
+                    "name": request.name,
+                    "imported_at": datetime.now().isoformat(),
+                })
+            else:
+                log_repo_import(None, "github", request.path, "failed", result.error_code)
+                return make_error(result.error_code, result.error_message)
+
+    except Exception as e:
+        logger.error(f"导入仓库失败: {e}")
+        log_repo_import(None, request.type, request.path, "failed", "INTERNAL_ERROR")
+        return make_error("INTERNAL_ERROR", "导入仓库失败", 500)
+
+
+@router.get("/repo/current", response_model=dict)
+async def get_current_repo_endpoint():
+    """
+    获取当前仓库
+
+    返回最近导入的仓库信息。
+    """
+    try:
+        repo = get_current_repo()
+        if not repo:
+            return make_response({"data": None})
+
+        return make_response({
+            "id": str(repo["id"]),
+            "type": repo["type"],
+            "local_path": repo["local_path"],
+            "remote_url": repo["remote_url"],
+            "name": repo["name"],
+            "description": repo["description"],
+            "imported_at": repo["imported_at"],
+        })
+
+    except Exception as e:
+        logger.error(f"获取当前仓库失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取当前仓库失败", 500)
+
+
+@router.post("/dialog/select-folder", response_model=dict)
+async def select_folder(req: Request):
+    """
+    打开原生文件夹选择对话框并返回选中的路径。
+
+    仅支持 Windows 服务器环境。如果在无界面环境中运行，会返回错误。
+    """
+    try:
+        import platform
+        import tempfile
+        import subprocess
+
+        if platform.system() != "Windows":
+            return make_error("UNSUPPORTED_PLATFORM", "仅支持 Windows 系统", 400)
+
+        # 使用 PowerShell 打开文件夹选择对话框
+        # 使用 Windows Forms 的 FolderBrowserDialog
+        ps_script = '''
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = "选择文件夹"
+$dialog.ShowNewFolderButton = $true
+$result = $dialog.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+    Write-Output $dialog.SelectedPath
+}
+'''
+        # 写入临时脚本文件
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.ps1', delete=False, encoding='utf-8') as f:
+            f.write(ps_script)
+            script_path = f.name
+
+        try:
+            result = subprocess.run(
+                ['powershell', '-ExecutionPolicy', 'Bypass', '-File', script_path],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            selected_path = result.stdout.strip()
+
+            if selected_path:
+                return make_response({"path": selected_path})
+            else:
+                return make_response({"path": None})  # 用户取消了选择
+        finally:
+            # 清理临时脚本
+            try:
+                os.unlink(script_path)
+            except Exception:
+                pass
+
+    except subprocess.TimeoutExpired:
+        return make_error("DIALOG_TIMEOUT", "对话框超时", 400)
+    except Exception as e:
+        logger.error(f"打开文件夹对话框失败: {e}")
+        return make_error("DIALOG_ERROR", f"打开文件夹对话框失败: {str(e)}", 500)
 
