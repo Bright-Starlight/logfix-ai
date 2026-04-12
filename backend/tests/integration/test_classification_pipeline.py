@@ -60,13 +60,15 @@ class TestClassificationPipeline:
         """测试工具 schema 结构"""
         from backend.src.services.ai_analyzer import CLASSIFY_LOG_TOOL_SCHEMA
 
-        assert CLASSIFY_LOG_TOOL_SCHEMA["name"] == "classify_log"
-        assert "parameters" in CLASSIFY_LOG_TOOL_SCHEMA
+        assert CLASSIFY_LOG_TOOL_SCHEMA["type"] == "function"
+        assert CLASSIFY_LOG_TOOL_SCHEMA["function"]["name"] == "classify_log"
+        assert "parameters" in CLASSIFY_LOG_TOOL_SCHEMA["function"]
 
-        params = CLASSIFY_LOG_TOOL_SCHEMA["parameters"]
+        params = CLASSIFY_LOG_TOOL_SCHEMA["function"]["parameters"]
         assert params["type"] == "object"
-        assert "log_entry" in params["properties"]
         assert "index" in params["properties"]
+        assert "category" in params["properties"]
+        assert "normalized_message" in params["properties"]
 
 
 class TestStreamingPipeline:

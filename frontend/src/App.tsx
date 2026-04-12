@@ -7,6 +7,7 @@ import LogList from './components/LogList'
 import LogDetail from './components/LogDetail'
 import SearchFilter from './components/SearchFilter'
 import StatsPanel from './components/StatsPanel'
+import IgnoreRuleManager from './components/IgnoreRuleManager'
 import type { SearchFilters } from './components/SearchFilter'
 
 export interface AppState {
@@ -16,6 +17,7 @@ export interface AppState {
   activeView: 'split' | 'classify'
   selectedLogId: string | null
   searchFilters: SearchFilters
+  showIgnoreRules: boolean
 }
 
 function App() {
@@ -26,6 +28,7 @@ function App() {
     activeView: 'split',
     selectedLogId: null,
     searchFilters: {},
+    showIgnoreRules: false,
   })
 
   const handleFileUploaded = (fileId: string) => {
@@ -83,6 +86,21 @@ function App() {
       <main className="app-main">
         {state.activeView === 'split' && (
           <>
+            <div className="results-header">
+              <button
+                className="secondary-button"
+                onClick={() => setState((prev) => ({ ...prev, showIgnoreRules: !prev.showIgnoreRules }))}
+              >
+                {state.showIgnoreRules ? '关闭忽略规则' : '忽略规则配置'}
+              </button>
+            </div>
+
+            {state.showIgnoreRules && (
+              <div className="ignore-rules-section">
+                <IgnoreRuleManager />
+              </div>
+            )}
+
             {state.splitStatus === 'idle' && !state.fileId && (
               <FileUpload onFileUploaded={handleFileUploaded} />
             )}

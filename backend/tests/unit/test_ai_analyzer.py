@@ -10,6 +10,7 @@ import json
 
 from backend.src.services.ai_analyzer import (
     parse_tool_call_response,
+    parse_tool_call_arguments,
     ClassificationResult,
     CLASSIFY_LOG_TOOL_SCHEMA,
     get_semaphore,
@@ -94,6 +95,20 @@ class TestToolCallParsing:
         assert result.error_type == "SQLException: Connection refused"
         assert result.extracted_params == {"host": "localhost", "port": 5432}
 
+    def test_parse_tool_call_arguments_valid(self):
+        """测试直接解析 arguments JSON"""
+        result = parse_tool_call_arguments(json.dumps({
+            "index": 2,
+            "category": "警告",
+            "error_type": "TimeoutException",
+            "normalized_message": "Request timeout at *",
+            "extracted_params": {"timeout": 30},
+        }))
+
+        assert result is not None
+        assert result.index == 2
+        assert result.category == "警告"
+
 
 class TestClassificationResult:
     """ClassificationResult 数据类测试"""
@@ -133,29 +148,32 @@ class TestToolSchema:
 
     def test_classify_log_tool_schema_structure(self):
         """测试 classify_log 工具 schema 结构"""
-        assert CLASSIFY_LOG_TOOL_SCHEMA["name"] == "classify_log"
-        assert "description" in CLASSIFY_LOG_TOOL_SCHEMA
-        assert "parameters" in CLASSIFY_LOG_TOOL_SCHEMA
+        assert CLASSIFY_LOG_TOOL_SCHEMA["type"] == "function"
+        assert CLASSIFY_LOG_TOOL_SCHEMA["function"]["name"] == "classify_log"
+        assert "description" in CLASSIFY_LOG_TOOL_SCHEMA["function"]
+        assert "parameters" in CLASSIFY_LOG_TOOL_SCHEMA["function"]
 
-        params = CLASSIFY_LOG_TOOL_SCHEMA["parameters"]
+        params = CLASSIFY_LOG_TOOL_SCHEMA["function"]["parameters"]
         assert params["type"] == "object"
         assert "properties" in params
         assert "required" in params
 
         # 验证必需字段
-        assert "log_entry" in params["required"]
         assert "index" in params["required"]
+        assert "category" in params["required"]
+        assert "normalized_message" in params["required"]
+        assert "extracted_params" in params["required"]
 
         # 验证字段类型
-        assert params["properties"]["log_entry"]["type"] == "string"
         assert params["properties"]["index"]["type"] == "integer"
 
     def test_classify_log_tool_schema_descriptions(self):
         """测试 classify_log 工具字段描述"""
-        params = CLASSIFY_LOG_TOOL_SCHEMA["parameters"]["properties"]
+        params = CLASSIFY_LOG_TOOL_SCHEMA["function"]["parameters"]["properties"]
 
-        assert "description" in params["log_entry"]
         assert "description" in params["index"]
+        assert "description" in params["category"]
+        assert "description" in params["normalized_message"]
 
 
 class TestConcurrency:

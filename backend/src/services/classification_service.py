@@ -5,6 +5,7 @@
 """
 
 import uuid
+from collections import OrderedDict
 from datetime import datetime
 from typing import Optional
 
@@ -123,11 +124,8 @@ async def classify_logs(
 
     processed = 0
     new_entries = 0
-    duplicates = 0
     ignored_count = 0
     entries = []
-    _ai_results: Optional[list] = None  # AI 批量结果缓存
-    _ai_error: Optional[str] = None      # AI 错误信息缓存
     total = len(logs)
     start_time = datetime.now()
 
@@ -161,73 +159,82 @@ async def classify_logs(
             except Exception as e:
                 _logger.warning(f"更新进度失败: {e}")
 
-    # 初始阶段：去重检测
-    update_progress("去重检测中", 0)
+    update_progress("预处理去重中", 0)
 
-    for log_entry in logs:
-        processed += 1
-
-        # 检查忽略规则
+    dedup_buckets: "OrderedDict[str, dict]" = OrderedDict()
+    for original_index, log_entry in enumerate(logs):
         ignored, matched_rule = should_ignore(log_entry, ignore_rules)
         if ignored:
             ignored_count += 1
             _logger.debug(f"日志被忽略: {matched_rule.get('name')}")
             continue
 
-        # 归一化消息
         normalized = normalize_message(log_entry)
+        bucket = dedup_buckets.get(normalized)
+        if bucket is None:
+            dedup_buckets[normalized] = {
+                "normalized": normalized,
+                "representative_log": log_entry,
+                "members": [{
+                    "original_index": original_index,
+                    "log_entry": log_entry,
+                    "stack_trace": extract_stack_trace(log_entry),
+                    "log_level": detect_log_level(log_entry),
+                }],
+            }
+        else:
+            bucket["members"].append({
+                "original_index": original_index,
+                "log_entry": log_entry,
+                "stack_trace": extract_stack_trace(log_entry),
+                "log_level": detect_log_level(log_entry),
+            })
 
-        # 提取堆栈跟踪
-        stack_trace = extract_stack_trace(log_entry)
+    unique_logs = [bucket["representative_log"] for bucket in dedup_buckets.values()]
+    _logger.info(
+        f"结构化预去重完成: total={total}, ignored={ignored_count}, unique={len(unique_logs)}, "
+        f"deduped={total - ignored_count - len(unique_logs)}"
+    )
 
-        # 检测日志级别
-        log_level = detect_log_level(log_entry)
+    parse_rules = get_enabled_parse_rules(db) if mode == "rule_engine" else []
+    ai_result_map: dict[int, ClassificationResult] = {}
+    if mode == "ai" and unique_logs:
+        update_progress("AI 分析中", 0)
+        ai_results, ai_error = await analyze_logs_ai(unique_logs)
+        if ai_error:
+            _logger.error(f"AI 分析失败: {ai_error}")
+        if ai_results:
+            ai_result_map = {item.index: item for item in ai_results}
+        _logger.info(
+            f"AI 结构化完成: unique={len(unique_logs)}, ai_hit={len(ai_result_map)}, "
+            f"ai_miss={len(unique_logs) - len(ai_result_map)}"
+        )
+
+    for unique_index, bucket in enumerate(dedup_buckets.values()):
+        log_entry = bucket["representative_log"]
+        normalized_for_dedup = bucket["normalized"]
 
         if mode == "rule_engine":
-            # 规则引擎模式
-            # 获取解析规则
-            parse_rules = get_enabled_parse_rules(db)
-
             if parse_rules:
-                # 使用规则引擎
                 rule_result = execute_rules_chain(log_entry, parse_rules)
                 if rule_result:
                     error_type = rule_result.get("error_type")
                     extracted_params = rule_result.get("params", {})
                 else:
-                    # 未匹配规则，使用默认分类
                     category_name, error_type = classify_message(log_entry)
                     extracted_params = {}
             else:
-                # 无规则，使用默认分类
                 category_name, error_type = classify_message(log_entry)
                 extracted_params = {}
-
         elif mode == "ai":
-            # AI 模式 - 批量处理
-            # 注意：AI 分析已在循环外批量调用，这里直接使用结果
-            if _ai_results is None:
-                # 首次进入 AI 模式，预获取 AI 结果
-                update_progress("AI 分析中", processed - 1)
-                _ai_results, _ai_error = await analyze_logs_ai(logs)
-                if _ai_error:
-                    _logger.error(f"AI 分析失败: {_ai_error}")
-
-            if _ai_results:
-                # 使用 AI 结果查找对应索引
-                found = False
-                for classification in _ai_results:
-                    if classification.index == processed - 1:
-                        category_name, error_type, extracted_params = classify_with_ai_result(
-                            log_entry, classification
-                        )
-                        found = True
-                        break
-                if not found:
-                    category_name, error_type = classify_message(log_entry)
-                    extracted_params = {}
+            classification = ai_result_map.get(unique_index)
+            if classification:
+                category_name, error_type, extracted_params = classify_with_ai_result(
+                    log_entry, classification
+                )
+                if classification.normalized_message:
+                    normalized_for_dedup = classification.normalized_message
             else:
-                # AI 失败，降级到规则引擎
                 category_name, error_type = classify_message(log_entry)
                 extracted_params = {}
         else:
@@ -235,78 +242,90 @@ async def classify_logs(
             category_name, error_type = classify_message(log_entry)
             extracted_params = {}
 
-        # 去重检查
-        update_progress("分类分析中", processed)
-        existing = find_duplicate_entry(normalized, db)
-        if existing:
-            # 更新重复记录
-            update_duplicate_entry(existing["id"], db)
-            duplicates += 1
-            _logger.debug(f"重复条目: {existing['id']}")
+        bucket["classification"] = {
+            "category_name": category_name,
+            "error_type": error_type,
+            "extracted_params": extracted_params,
+            "normalized_for_dedup": normalized_for_dedup,
+        }
 
-            entries.append({
-                "id": existing["id"],
-                "original_message": log_entry,
-                "normalized_message": normalized,
-                "stack_trace": stack_trace,
-                "category": category_name,
-                "error_type": error_type,
-                "log_level": log_level,
-                "occurrence_count": existing["occurrence_count"] + 1,
-            })
-        else:
-            # 创建新记录
-            update_progress("存储中", processed)
-            category = get_or_create_category(db, category_name)
+    update_progress("存储中", 0)
+    for bucket in dedup_buckets.values():
+        classification = bucket["classification"]
+        category_name = classification["category_name"]
+        error_type = classification["error_type"]
+        extracted_params = classification["extracted_params"]
+        normalized_for_dedup = classification["normalized_for_dedup"]
 
-            entry = LogEntry(
-                original_message=log_entry,
-                normalized_message=normalized,
-                stack_trace=stack_trace,
-                category_id=category.id,
-                error_type=error_type,
-                extracted_params=extracted_params,
-                log_level=log_level,
-                occurrence_count=1,
-                first_seen_at=datetime.now(),
-                last_seen_at=datetime.now(),
-            )
-            db.add(entry)
-            db.flush()
+        for member in bucket["members"]:
+            processed += 1
+            update_progress("分类分析中", processed)
 
-            new_entries += 1
-            _logger.debug(f"新条目: {entry.id}")
+            existing = find_duplicate_entry(normalized_for_dedup, db)
+            if existing:
+                update_duplicate_entry(existing["id"], db)
+                _logger.debug(f"重复条目: {existing['id']}")
 
-            entries.append({
-                "id": str(entry.id),
-                "original_message": log_entry,
-                "normalized_message": normalized,
-                "stack_trace": stack_trace,
-                "category": category_name,
-                "error_type": error_type,
-                "extracted_params": extracted_params,
-                "log_level": log_level,
-                "occurrence_count": 1,
-                "first_seen_at": entry.first_seen_at,
-                "last_seen_at": entry.last_seen_at,
-            })
+                entries.append({
+                    "id": existing["id"],
+                    "original_message": member["log_entry"],
+                    "normalized_message": normalized_for_dedup,
+                    "stack_trace": member["stack_trace"],
+                    "category": category_name,
+                    "error_type": error_type,
+                    "log_level": member["log_level"],
+                    "occurrence_count": existing["occurrence_count"] + 1,
+                })
+            else:
+                category = get_or_create_category(db, category_name)
 
-        # 定期更新分类会话进度
-        if classification_session_id and processed % update_interval == 0:
-            update_progress("处理中", processed)
+                entry = LogEntry(
+                    original_message=member["log_entry"],
+                    normalized_message=normalized_for_dedup,
+                    stack_trace=member["stack_trace"],
+                    category_id=category.id,
+                    error_type=error_type,
+                    extracted_params=extracted_params,
+                    log_level=member["log_level"],
+                    occurrence_count=1,
+                    first_seen_at=datetime.now(),
+                    last_seen_at=datetime.now(),
+                )
+                db.add(entry)
+                db.flush()
+
+                new_entries += 1
+                _logger.debug(f"新条目: {entry.id}")
+
+                entries.append({
+                    "id": str(entry.id),
+                    "original_message": member["log_entry"],
+                    "normalized_message": normalized_for_dedup,
+                    "stack_trace": member["stack_trace"],
+                    "category": category_name,
+                    "error_type": error_type,
+                    "extracted_params": extracted_params,
+                    "log_level": member["log_level"],
+                    "occurrence_count": 1,
+                    "first_seen_at": entry.first_seen_at,
+                    "last_seen_at": entry.last_seen_at,
+                })
+
+            if classification_session_id and processed % update_interval == 0:
+                update_progress("处理中", processed)
 
     # 最终进度更新（确保最后一次进度被保存）
     if classification_session_id and processed > 0:
         update_progress("已完成", processed)
 
     _logger.info(
-        f"分类完成: processed={processed}, new={new_entries}, duplicates={duplicates}, ignored={ignored_count}"
+        f"分类完成: processed={processed}, new={new_entries}, ignored={ignored_count}"
     )
 
     return {
         "processed": processed,
         "new_entries": new_entries,
-        "duplicates": duplicates,
+        "duplicates": 0,
         "ignored": ignored_count,
         "entries": entries,
     }

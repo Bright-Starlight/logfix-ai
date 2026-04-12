@@ -7,11 +7,12 @@ AI分析服务
 import json
 import asyncio
 import os
-from typing import Optional, AsyncIterator, Any
+import time
+from typing import Optional, AsyncIterator
 from dataclasses import dataclass
 
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageToolCall
+from openai.types.chat import ChatCompletionMessageToolCall
 
 from backend.src.services.log_service import get_logger
 
@@ -26,7 +27,7 @@ _semaphore: Optional[asyncio.Semaphore] = None
 
 # 默认配置
 DEFAULT_MAX_CONCURRENT = 5
-DEFAULT_BATCH_SIZE = 100
+DEFAULT_BATCH_SIZE = 50
 MAX_BATCH_SIZE = 100  # 限制批次大小防止上下文溢出（每条日志产生2条消息：user + assistant）
 
 
@@ -108,16 +109,30 @@ CLASSIFY_LOG_TOOL_SCHEMA = {
         "parameters": {
             "type": "object",
             "properties": {
-                "log_entry": {
-                    "type": "string",
-                    "description": "原始日志条目",
-                },
                 "index": {
                     "type": "integer",
                     "description": "日志在列表中的索引",
                 },
+                "category": {
+                    "type": "string",
+                    "description": "分类名称（如：异常错误、警告、信息、调试）",
+                },
+                "error_type": {
+                    "type": ["string", "null"],
+                    "description": "错误类型（如：NullPointerException、TimeoutException）",
+                },
+                "normalized_message": {
+                    "type": "string",
+                    "description": "归一化消息（数字等参数应被替换为 *）",
+                },
+                "extracted_params": {
+                    "type": "object",
+                    "description": "从日志中提取的参数字典",
+                    "additionalProperties": True,
+                },
             },
-            "required": ["log_entry", "index"],
+            "required": ["index", "category", "normalized_message", "extracted_params"],
+            "additionalProperties": False,
         },
     },
 }
@@ -148,8 +163,24 @@ def parse_tool_call_response(tool_calls: list[ChatCompletionMessageToolCall]) ->
 
     try:
         tool_call = tool_calls[0]
-        arguments = json.loads(tool_call.function.arguments)
+        return parse_tool_call_arguments(tool_call.function.arguments)
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        _logger.error(f"Tool Call 响应解析失败: {e}")
+        return None
 
+
+def parse_tool_call_arguments(arguments_text: str) -> Optional[ClassificationResult]:
+    """
+    解析 tool_call 的 arguments JSON 字符串
+
+    Args:
+        arguments_text: tool_call.function.arguments
+
+    Returns:
+        ClassificationResult 或 None（解析失败时）
+    """
+    try:
+        arguments = json.loads(arguments_text)
         return ClassificationResult(
             index=arguments.get("index", 0),
             category=arguments.get("category", "未知"),
@@ -157,14 +188,14 @@ def parse_tool_call_response(tool_calls: list[ChatCompletionMessageToolCall]) ->
             normalized_message=arguments.get("normalized_message", ""),
             extracted_params=arguments.get("extracted_params", {}),
         )
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        _logger.error(f"Tool Call 响应解析失败: {e}")
+    except (json.JSONDecodeError, TypeError) as e:
+        _logger.error(f"tool_call arguments 解析失败: {e}")
         return None
 
 
 async def stream_analyze_logs(
     log_entries: list[str],
-    batch_size: int = 100,
+    batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> AsyncIterator[dict]:
     """
     流式分析日志条目，通过 SSE 推送进度和结果
@@ -204,96 +235,173 @@ async def stream_analyze_logs(
 2. normalized_message 应去除参数，数字用 * 代替
 3. extracted_params 应提取所有参数"""
 
-    for i in range(0, total, effective_batch_size):
-        batch = log_entries[i:i + effective_batch_size]
-        batch_num = i // effective_batch_size + 1
-        total_batches = (total + effective_batch_size - 1) // effective_batch_size
+    async def process_batch(batch_start_index: int, batch_num: int, total_batches: int) -> list[dict]:
+        batch = log_entries[batch_start_index:batch_start_index + effective_batch_size]
+        batch_payload = [
+            {"index": batch_start_index + idx, "log_entry": log_entry}
+            for idx, log_entry in enumerate(batch)
+        ]
 
         _logger.debug(f"处理批次 {batch_num}/{total_batches}, size={len(batch)}")
 
         async with semaphore:
+            batch_start = time.perf_counter()
             try:
-                # 构建当前批次的消息
                 messages = [
                     {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            "请分析以下日志数组，并对每条日志各调用一次 classify_log。\n"
+                            "输入 JSON:\n"
+                            f"{json.dumps(batch_payload, ensure_ascii=False)}"
+                        ),
+                    },
                 ]
 
-                for idx, log_entry in enumerate(batch):
-                    actual_idx = i + idx
-                    messages.append({
-                        "role": "user",
-                        "content": f"请分析以下日志（索引 {actual_idx}）：\n{log_entry}"
-                    })
-
-                    # 添加工具调用
-                    messages.append({
-                        "role": "assistant",
-                        "tool_calls": [
-                            {
-                                "id": f"call_{actual_idx}",
-                                "type": "function",
-                                "function": {
-                                    "name": "classify_log",
-                                    "arguments": json.dumps({
-                                        "index": actual_idx,
-                                        "log_entry": log_entry,
-                                    }),
-                                },
-                            }
-                        ],
-                    })
-
-                # 调用 API（流式）
-                stream = await client.chat.completions.create(
+                _logger.info(f"批次 {batch_num}/{total_batches} 调用AI开始, size={len(batch_payload)}")
+                response = await client.chat.completions.create(
                     model="MiniMax-M2.7",
                     messages=messages,
                     tools=[CLASSIFY_LOG_TOOL_SCHEMA],
-                    stream=True,
+                    stream=False,
                     temperature=0.3,
+                    tool_choice="required",
+                )
+                request_elapsed_ms = int((time.perf_counter() - batch_start) * 1000)
+                usage = getattr(response, "usage", None)
+                _logger.info(
+                    f"批次 {batch_num}/{total_batches} 调用AI结束, "
+                    f"size={len(batch_payload)}, elapsed_ms={request_elapsed_ms}, "
+                    f"prompt_tokens={getattr(usage, 'prompt_tokens', None)}, "
+                    f"completion_tokens={getattr(usage, 'completion_tokens', None)}, "
+                    f"total_tokens={getattr(usage, 'total_tokens', None)}"
                 )
 
-                async for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.tool_calls:
-                        tool_calls = chunk.choices[0].delta.tool_calls
-                        result = parse_tool_call_response(tool_calls)
+                if not response.choices:
+                    raise ValueError(f"批次 {batch_num} 响应为空")
 
-                        if result:
-                            processed += 1
-                            success_count += 1
+                message = response.choices[0].message
+                tool_calls = message.tool_calls or []
+                if not tool_calls:
+                    raise ValueError(f"批次 {batch_num} 未返回 tool_calls")
 
-                            yield {
-                                "event": "result",
-                                "data": {
-                                    "index": result.index,
-                                    "category": result.category,
-                                    "error_type": result.error_type,
-                                    "normalized_message": result.normalized_message,
-                                    "extracted_params": result.extracted_params,
-                                },
-                            }
+                results_by_index: dict[int, ClassificationResult] = {}
+                batch_events: list[dict] = []
+                parse_fail_count = 0
+                unexpected_tool_names: list[str] = []
+                for tc in tool_calls:
+                    if not tc.function:
+                        continue
+                    if tc.function.name != "classify_log":
+                        unexpected_tool_names.append(tc.function.name or "unknown")
+                        _logger.warning(
+                            f"批次 {batch_num} 收到非预期工具调用: {tc.function.name}"
+                        )
+                        continue
 
-                            # 推送进度
-                            percentage = int(processed / total * 100) if total > 0 else 0
-                            yield {
-                                "event": "progress",
-                                "data": {
-                                    "processed": processed,
-                                    "total": total,
-                                    "percentage": percentage,
-                                },
-                            }
+                    result = parse_tool_call_arguments(tc.function.arguments)
+                    if not result:
+                        parse_fail_count += 1
+                        _logger.warning(
+                            f"批次 {batch_num} tool_call解析失败: tool_call_id={tc.id}, "
+                            f"arguments_preview={str(tc.function.arguments)[:200]}"
+                        )
+                        continue
+                    results_by_index[result.index] = result
+
+                expected_indices = [item["index"] for item in batch_payload]
+                missing_indices = [idx for idx in expected_indices if idx not in results_by_index]
+                if missing_indices:
+                    _logger.warning(
+                        f"批次 {batch_num}/{total_batches} 存在未命中: "
+                        f"expected={len(expected_indices)}, tool_calls={len(tool_calls)}, "
+                        f"parsed={len(results_by_index)}, parse_fail={parse_fail_count}, "
+                        f"unexpected_tool_calls={len(unexpected_tool_names)}, "
+                        f"missing={len(missing_indices)}, missing_indices_preview={missing_indices[:20]}"
+                    )
+
+                for item in batch_payload:
+                    actual_idx = item["index"]
+                    result = results_by_index.get(actual_idx)
+                    if not result:
+                        batch_events.append({
+                            "event": "error",
+                            "data": {
+                                "code": "ITEM_ERROR",
+                                "message": "该日志未返回有效分类结果",
+                                "index": actual_idx,
+                            },
+                        })
+                        continue
+
+                    batch_events.append({
+                        "event": "result",
+                        "data": {
+                            "index": result.index,
+                            "category": result.category,
+                            "error_type": result.error_type,
+                            "normalized_message": result.normalized_message,
+                            "extracted_params": result.extracted_params,
+                        },
+                    })
+
+                total_elapsed_ms = int((time.perf_counter() - batch_start) * 1000)
+                batch_success = len(results_by_index)
+                batch_error = len(batch_payload) - batch_success
+                _logger.info(
+                    f"批次 {batch_num}/{total_batches} 批次处理完成, "
+                    f"size={len(batch_payload)}, tool_calls={len(tool_calls)}, "
+                    f"parsed={len(results_by_index)}, parse_fail={parse_fail_count}, "
+                    f"success={batch_success}, error={batch_error}, elapsed_ms={total_elapsed_ms}"
+                )
+                return batch_events
 
             except Exception as e:
-                _logger.error(f"批次 {batch_num} 处理失败: {e}")
-                error_count += len(batch)
+                total_elapsed_ms = int((time.perf_counter() - batch_start) * 1000)
+                _logger.error(
+                    f"批次 {batch_num}/{total_batches} 调用AI失败, "
+                    f"size={len(batch_payload)}, elapsed_ms={total_elapsed_ms}, error={e}"
+                )
+                return [
+                    {
+                        "event": "error",
+                        "data": {
+                            "code": "BATCH_ERROR",
+                            "message": str(e),
+                            "index": item["index"],
+                        },
+                    }
+                    for item in batch_payload
+                ]
+
+    total_batches = (total + effective_batch_size - 1) // effective_batch_size if total > 0 else 0
+    batch_tasks = [
+        asyncio.create_task(
+            process_batch(batch_start_index=i, batch_num=i // effective_batch_size + 1, total_batches=total_batches)
+        )
+        for i in range(0, total, effective_batch_size)
+    ]
+
+    for batch_future in asyncio.as_completed(batch_tasks):
+        batch_events = await batch_future
+        for event in batch_events:
+            if event["event"] == "result":
+                processed += 1
+                success_count += 1
+                yield event
+                percentage = int(processed / total * 100) if total > 0 else 0
                 yield {
-                    "event": "error",
+                    "event": "progress",
                     "data": {
-                        "code": "BATCH_ERROR",
-                        "message": str(e),
-                        "batch": batch_num,
+                        "processed": processed,
+                        "total": total,
+                        "percentage": percentage,
                     },
                 }
+            else:
+                error_count += 1
+                yield event
 
     # 推送完成事件
     _logger.info(f"流式分析完成, processed={processed}, success={success_count}, error={error_count}")
