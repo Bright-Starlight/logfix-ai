@@ -23,34 +23,34 @@
 
 ## Phase 1: Setup（项目初始化）
 
-- [ ] T001 创建数据库迁移脚本，添加 analysis_status 字段到 log_entries 表
+- [x] T001 创建数据库迁移脚本，添加 analysis_status 字段到 log_entries 表
   `backend/src/models/entities.py`
-- [ ] T002 创建数据库迁移脚本，新建 analysis_sessions 表（AnalysisSession实体）
+- [x] T002 创建数据库迁移脚本，新建 analysis_sessions 表（AnalysisSession实体）
   `backend/src/models/entities.py`
-- [ ] T003 创建数据库迁移脚本，新建 fix_plans 表（FixPlan实体）
+- [x] T003 创建数据库迁移脚本，新建 fix_plans 表（FixPlan实体）
   `backend/src/models/entities.py`
-- [ ] T004 前端添加 AnalysisStatus 和 FixPlan 类型定义
+- [x] T004 前端添加 AnalysisStatus 和 FixPlan 类型定义
   `frontend/src/types/index.ts`
 
 ---
 
 ## Phase 2: Foundational（用户故事前置依赖）
 
-- [ ] T005 创建 AnalysisQueue 类，实现入队/出队/取消逻辑
+- [x] T005 创建 AnalysisQueue 类，实现入队/出队/取消逻辑
   `backend/src/services/analysis_queue.py`
-- [ ] T006 创建 FixPlanService 基础结构（空方法）
+- [x] T006 创建 FixPlanService 基础结构（空方法）
   `backend/src/services/fix_plan_service.py`
-- [ ] T007 扩展 AI Agent Tool Call Schema，新增 generate_fix_plan 工具
+- [x] T007 扩展 AI Agent Tool Call Schema，新增 generate_fix_plan 工具
   `backend/src/services/ai_analyzer.py`
-- [ ] T008 后端API路由：POST /api/analysis/start
+- [x] T008 后端API路由：POST /api/analysis/start
   `backend/src/api/routes.py`
-- [ ] T009 后端API路由：GET /api/analysis/status/{log_entry_id}
+- [x] T009 后端API路由：GET /api/analysis/status/{log_entry_id}
   `backend/src/api/routes.py`
-- [ ] T010 后端API路由：GET /api/analysis/fix-plan/{log_entry_id}
+- [x] T010 后端API路由：GET /api/analysis/fix-plan/{log_entry_id}
   `backend/src/api/routes.py`
-- [ ] T011 后端API路由：POST /api/analysis/cancel/{log_entry_id}
+- [x] T011 后端API路由：POST /api/analysis/cancel/{log_entry_id}
   `backend/src/api/routes.py`
-- [ ] T012 后端SSE端点：GET /api/analysis/stream/{session_id}
+- [x] T012 后端SSE端点：GET /api/analysis/stream/{session_id}
   `backend/src/api/routes.py`
 
 ---
@@ -61,36 +61,36 @@
 
 ### 3.1 实体关系 [US1]
 
-- [ ] T013 [P] [US1] 在 LogEntry 实体添加 analysis_status 字段和关系定义
+- [x] T013 [P] [US1] 在 LogEntry 实体添加 analysis_status 字段和关系定义
   `backend/src/models/entities.py`
 
 ### 3.2 服务层 [US1]
 
-- [ ] T014 [US1] 实现 FixPlanService.generate_fix_plan() 方法
+- [x] T014 [US1] 实现 FixPlanService.generate_fix_plan() 方法
   `backend/src/services/fix_plan_service.py`
-- [ ] T015 [US1] 实现 AnalysisQueue 与 FixPlanService 的集成
+- [x] T015 [US1] 实现 AnalysisQueue 与 FixPlanService 的集成
   `backend/src/services/analysis_queue.py`
 
 ### 3.3 API端点 [US1]
 
-- [ ] T016 [US1] 实现 POST /api/analysis/start 的完整逻辑（检查仓库→入队→返回）
+- [x] T016 [US1] 实现 POST /api/analysis/start 的完整逻辑（检查仓库→入队→返回）
   `backend/src/api/routes.py`
-- [ ] T017 [US1] 实现 GET /api/analysis/status/{log_entry_id} 的完整逻辑
+- [x] T017 [US1] 实现 GET /api/analysis/status/{log_entry_id} 的完整逻辑
   `backend/src/api/routes.py`
-- [ ] T018 [US1] 实现 SSE /api/analysis/stream/{session_id} 的完整逻辑
+- [x] T018 [US1] 实现 SSE /api/analysis/stream/{session_id} 的完整逻辑
   `backend/src/api/routes.py`
 
 ### 3.4 前端组件 [US1]
 
-- [ ] T019 [P] [US1] 创建 useAnalysisProgress hook
+- [x] T019 [P] [US1] 创建 useAnalysisProgress hook
   `frontend/src/hooks/useAnalysisProgress.ts`
-- [ ] T020 [P] [US1] 创建 useAnalysisQueue hook
+- [x] T020 [P] [US1] 创建 useAnalysisQueue hook
   `frontend/src/hooks/useAnalysisQueue.ts`
-- [ ] T021 [US1] 扩展 LogList 组件，添加分析状态标签
+- [x] T021 [US1] 扩展 LogList 组件，添加分析状态标签
   `frontend/src/components/LogList.tsx`
-- [ ] T022 [US1] 扩展 LogList 组件，添加"生成修复计划"按钮
+- [x] T022 [US1] 扩展 LogList 组件，添加"生成修复计划"按钮
   `frontend/src/components/LogList.tsx`
-- [ ] T023 [US1] 添加前端API调用方法 startAnalysis, getAnalysisStatus
+- [x] T023 [US1] 添加前端API调用方法 startAnalysis, getAnalysisStatus
   `frontend/src/services/api.ts`
 
 ---
@@ -99,11 +99,11 @@
 
 **目标**: 队列管理（最大5个任务：1执行中+4排队中）、队列满拒绝
 
-- [ ] T024 [US2] 实现 AnalysisQueue 队列满检查（max=5，含1执行中+4排队中）
+- [x] T024 [US2] 实现 AnalysisQueue 队列满检查（max=5，含1执行中+4排队中）
   `backend/src/services/analysis_queue.py`
-- [ ] T025 [US2] 实现队列满时返回 QUEUE_FULL 错误
+- [x] T025 [US2] 实现队列满时返回 QUEUE_FULL 错误
   `backend/src/api/routes.py`
-- [ ] T026 [US2] 实现分析完成自动出队并处理下一任务
+- [x] T026 [US2] 实现分析完成自动出队并处理下一任务
   `backend/src/services/analysis_queue.py`
 
 ---
@@ -112,11 +112,11 @@
 
 **目标**: 查看已生成的修复计划
 
-- [ ] T027 [US3] 创建 FixPlanViewer 组件
+- [x] T027 [US3] 创建 FixPlanViewer 组件
   `frontend/src/components/FixPlanViewer.tsx`
-- [ ] T028 [US3] 实现 GET /api/analysis/fix-plan/{log_entry_id} 返回修复计划
+- [x] T028 [US3] 实现 GET /api/analysis/fix-plan/{log_entry_id} 返回修复计划
   `backend/src/api/routes.py`
-- [ ] T029 [US3] LogList 中"分析完成"状态显示"查看修复计划"按钮
+- [x] T029 [US3] LogList 中"分析完成"状态显示"查看修复计划"按钮
   `frontend/src/components/LogList.tsx`
 
 ---
@@ -125,7 +125,7 @@
 
 > 宪法VIII条要求 `/speckit.implement` 完成后必须执行集成验证
 
-- [ ] T030 集成验证：确认 LogList 正确导入并使用新组件
+- [x] T030 集成验证：确认 LogList 正确导入并使用新组件
   `frontend/src/pages/AnalysisPipeline.tsx`
   **验证项**: 代码阅读确认组件导入、渲染、状态连接、用户入口
 
