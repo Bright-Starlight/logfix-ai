@@ -15,6 +15,7 @@ from fastapi import APIRouter, File, UploadFile, Form, Query, Request, Backgroun
 from fastapi.responses import JSONResponse, StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.src.api.schemas import (
@@ -27,7 +28,6 @@ from backend.src.api.schemas import (
     SessionStatusResponse,
     ResultsResponse,
     ChunkDetailResponse,
-    # 002-short-name-structured 新增
     ClassifyRequest,
     LogEntryResponse,
     LogListItemResponse,
@@ -38,25 +38,29 @@ from backend.src.api.schemas import (
     UpdateParseRuleRequest,
     IgnoreRuleResponse,
     CreateIgnoreRuleRequest,
-    # 003-log-analysis-pipeline 新增
     ClassificationStartRequest,
     ClassificationStartResponse,
     ClassificationProgressResponse,
     ClassificationResultResponse,
-    # 006-repo-import 新增
     RepoValidateRequest,
     RepoImportRequest,
     RepoInfoData,
     RepoInfoResponse,
+    AnalysisStartRequest,
+    AnalysisStartResponse,
+    AnalysisStatusResponse,
+    FixPlanResponse,
+    QueueStatusResponse,
 )
 from backend.src.db.session import get_db_session
 from backend.src.models.entities import (
     LogFile, SplitSession, SplitResult,
     LogEntry, LogCategory, ParseRule, IgnoreRule, LogStatistics,
     ClassificationSession,
-    # 006-repo-import 新增
     Repository,
     ImportSession,
+    AnalysisSession,
+    FixPlan,
 )
 from backend.src.services.file_handler import get_file_handler, FileHandler
 from backend.src.services.splitter import LogSplitter, validate_regex_pattern
@@ -65,7 +69,6 @@ from backend.src.services.log_service import (
     log_split_rule_applied,
     log_error,
     get_logger,
-    # 006-repo-import 新增
     log_repo_validate,
     log_repo_import,
 )
@@ -78,8 +81,24 @@ from backend.src.utils.github import parse_github_owner_repo
 router = APIRouter(prefix="/api")
 logger = get_logger("routes")
 
+
+def parse_date_range(start_date: Optional[str], end_date: Optional[str]):
+    """解析日期范围参数"""
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+    return start_dt, end_dt
+
+
+def dt_to_iso(dt: Optional[datetime]) -> Optional[str]:
+    """将datetime转换为ISO格式字符串"""
+    return dt.isoformat() if dt else None
+
+
 # 内容截断限制
 MAX_CONTENT_PREVIEW = 1000
+
+# 分析会话活跃状态
+ANALYSIS_ACTIVE_STATUSES = ["pending", "queued", "processing"]
 
 # 存储基础路径 - 使用项目根目录的绝对路径
 STORAGE_BASE_PATH = Path(__file__).parent.parent.parent / "storage"
@@ -544,12 +563,10 @@ async def get_logs_list(
                 )
 
             # 日期范围过滤
-            if start_date:
-                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            start_dt, end_dt = parse_date_range(start_date, end_date)
+            if start_dt:
                 query = query.filter(LogEntry.created_at >= start_dt)
-
-            if end_date:
-                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            if end_dt:
                 query = query.filter(LogEntry.created_at <= end_dt)
 
             # 总数
@@ -559,7 +576,7 @@ async def get_logs_list(
             total_pages = (total + page_size - 1) // page_size
             offset = (page - 1) * page_size
 
-            entries = query.order_by(
+            entries = query.options(joinedload(LogEntry.category)).order_by(
                 LogEntry.created_at.desc()
             ).offset(offset).limit(page_size).all()
 
@@ -578,8 +595,8 @@ async def get_logs_list(
                     "error_type": entry.error_type,
                     "log_level": entry.log_level,
                     "occurrence_count": entry.occurrence_count,
-                    "first_seen_at": entry.first_seen_at.isoformat() if entry.first_seen_at else None,
-                    "last_seen_at": entry.last_seen_at.isoformat() if entry.last_seen_at else None,
+                    "first_seen_at": dt_to_iso(entry.first_seen_at),
+                    "last_seen_at": dt_to_iso(entry.last_seen_at),
                 })
 
             return make_response({
@@ -622,8 +639,8 @@ async def get_log_detail(log_id: str):
                 "extracted_params": entry.extracted_params,
                 "log_level": entry.log_level,
                 "occurrence_count": entry.occurrence_count,
-                "first_seen_at": entry.first_seen_at.isoformat() if entry.first_seen_at else None,
-                "last_seen_at": entry.last_seen_at.isoformat() if entry.last_seen_at else None,
+                "first_seen_at": dt_to_iso(entry.first_seen_at),
+                "last_seen_at": dt_to_iso(entry.last_seen_at),
             })
 
     except Exception as e:
@@ -642,12 +659,10 @@ async def get_stats(
             query = db.query(LogEntry)
 
             # 日期范围过滤
-            if start_date:
-                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            start_dt, end_dt = parse_date_range(start_date, end_date)
+            if start_dt:
                 query = query.filter(LogEntry.created_at >= start_dt)
-
-            if end_date:
-                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            if end_dt:
                 query = query.filter(LogEntry.created_at <= end_dt)
 
             # 总条目数和唯一错误数
@@ -1161,7 +1176,7 @@ async def get_classification_result(session_id: str):
                 "new_entries": session.new_entries,
                 "duplicates": session.duplicates,
                 "ignored": session.ignored,
-                "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+                "completed_at": dt_to_iso(session.completed_at),
             })
 
     except Exception as e:
@@ -1496,4 +1511,384 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
     except Exception as e:
         logger.error(f"打开文件夹对话框失败: {e}")
         return make_error("DIALOG_ERROR", f"打开文件夹对话框失败: {str(e)}", 500)
+
+
+# ============ 007-error-log-analysis-status 分析端点 ============
+
+
+@router.post("/analysis/start", response_model=dict)
+async def start_analysis(request: AnalysisStartRequest):
+    """
+    启动修复计划分析
+
+    创建分析会话并加入队列。
+    """
+    try:
+        with get_db_session() as db:
+            # 检查日志条目是否存在
+            log_entry = db.query(LogEntry).filter(LogEntry.id == request.log_entry_id).first()
+            if not log_entry:
+                return make_error("LOG_NOT_FOUND", "日志条目不存在", 404)
+
+            # 检查是否已有进行中的分析任务
+            existing = db.query(AnalysisSession).filter(
+                AnalysisSession.log_entry_id == request.log_entry_id,
+                AnalysisSession.status.in_(ANALYSIS_ACTIVE_STATUSES)
+            ).first()
+            if existing:
+                return make_error("ANALYSIS_EXISTS", "该日志已有分析任务进行中", 409)
+
+            # 获取当前仓库路径
+            from backend.src.services.repo_service import get_current_repo
+            repo = get_current_repo()
+            repo_path = repo["local_path"] if repo else None
+
+            # 创建分析会话
+            session = AnalysisSession(
+                log_entry_id=request.log_entry_id,
+                status="pending",
+            )
+            db.add(session)
+            db.flush()
+
+            session_id = str(session.id)
+
+            # 加入队列
+            from backend.src.services.analysis_queue import get_analysis_queue
+            queue = get_analysis_queue()
+            success, error_code, queue_position = await queue.enqueue(request.log_entry_id, session.id)
+
+            if not success:
+                # 更新会话状态
+                session.status = "queued"
+                session.queue_position = None  # 队列满时为 None
+                db.commit()
+                return make_error(error_code, "队列已满，请稍后再试", 429)
+
+            # 更新日志状态为 analyzing
+            log_entry.analysis_status = "analyzing"
+
+            # 更新会话状态
+            session.status = "queued"
+            session.queue_position = queue_position
+            db.commit()
+
+            # 如果队列空闲，立即处理
+            await queue.start_next_if_idle()
+
+            return make_response({
+                "session_id": session_id,
+                "status": "queued",
+                "queue_position": queue_position,
+            }, status_code=201)
+
+    except Exception as e:
+        logger.error(f"启动分析失败: {e}")
+        log_error("INTERNAL_ERROR", str(e), {"log_entry_id": request.log_entry_id})
+        return make_error("INTERNAL_ERROR", "启动分析失败", 500)
+
+
+@router.get("/analysis/status/{log_entry_id}", response_model=dict)
+async def get_analysis_status(log_entry_id: int):
+    """
+    获取分析状态
+
+    返回指定日志条目的最新分析会话状态。
+    """
+    try:
+        with get_db_session() as db:
+            session = db.query(AnalysisSession).filter(
+                AnalysisSession.log_entry_id == log_entry_id
+            ).order_by(AnalysisSession.created_at.desc()).first()
+
+            if not session:
+                return make_error("SESSION_NOT_FOUND", "分析会话不存在", 404)
+
+            return make_response({
+                "session_id": str(session.id),
+                "status": session.status,
+                "log_entry_id": session.log_entry_id,
+                "queue_position": session.queue_position,
+                "error_message": session.error_message,
+                "created_at": dt_to_iso(session.created_at),
+                "started_at": dt_to_iso(session.started_at),
+                "completed_at": dt_to_iso(session.completed_at),
+            })
+
+    except Exception as e:
+        logger.error(f"获取分析状态失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取分析状态失败", 500)
+
+
+@router.get("/analysis/fix-plan/{log_entry_id}", response_model=dict)
+async def get_fix_plan(log_entry_id: int):
+    """
+    获取修复计划
+
+    返回指定日志条目的修复计划（如果已生成）。
+    """
+    try:
+        with get_db_session() as db:
+            # 先查修复计划（判断是否存在）
+            fix_plan = db.query(FixPlan).filter(FixPlan.log_entry_id == log_entry_id).first()
+
+            if fix_plan:
+                return make_response({
+                    "log_entry_id": log_entry_id,
+                    "session_id": str(fix_plan.session_id) if fix_plan.session_id else None,
+                    "fix_plan": {
+                        "root_cause": fix_plan.root_cause,
+                        "fix_steps": fix_plan.fix_steps,
+                        "code_locations": fix_plan.code_locations,
+                        "confidence": fix_plan.confidence,
+                        "impact_assessment": fix_plan.impact_assessment,
+                    },
+                    "status": "completed",
+                })
+
+            # 无修复计划时，检查日志是否存在并获取分析状态
+            log_entry = db.query(LogEntry).filter(LogEntry.id == log_entry_id).first()
+            if not log_entry:
+                return make_error("LOG_NOT_FOUND", "日志条目不存在", 404)
+
+            return make_response({
+                "log_entry_id": log_entry_id,
+                "session_id": None,
+                "fix_plan": None,
+                "status": log_entry.analysis_status,
+            })
+
+    except Exception as e:
+        logger.error(f"获取修复计划失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取修复计划失败", 500)
+
+
+@router.post("/analysis/cancel/{log_entry_id}", response_model=dict)
+async def cancel_analysis(log_entry_id: int):
+    """
+    取消分析任务
+
+    取消指定日志条目的分析任务（如果还在队列中）。
+    """
+    try:
+        from backend.src.services.analysis_queue import get_analysis_queue
+        queue = get_analysis_queue()
+
+        success = await queue.cancel(log_entry_id)
+
+        if success:
+            with get_db_session() as db:
+                session = db.query(AnalysisSession).filter(
+                    AnalysisSession.log_entry_id == log_entry_id,
+                    AnalysisSession.status.in_(ANALYSIS_ACTIVE_STATUSES)
+                ).first()
+                if session:
+                    session.status = "cancelled"
+                    db.commit()
+
+                log_entry = db.query(LogEntry).filter(LogEntry.id == log_entry_id).first()
+                if log_entry:
+                    log_entry.analysis_status = "un_analyzed"
+                    db.commit()
+
+            return make_response({"cancelled": True})
+        else:
+            return make_error("CANCEL_FAILED", "取消失败，任务可能已完成或不存在", 400)
+
+    except Exception as e:
+        logger.error(f"取消分析失败: {e}")
+        return make_error("INTERNAL_ERROR", "取消分析失败", 500)
+
+
+@router.get("/analysis/stream/{session_id}")
+async def analysis_stream(session_id: str):
+    """
+    SSE 流式分析端点
+
+    通过 Server-Sent Events 实时推送分析进度和结果。
+    客户端建立连接后，如果队列空闲则立即开始处理，否则等待。
+    """
+    async def event_generator():
+        _logger = get_logger("analysis_stream")
+
+        try:
+            from backend.src.services.analysis_queue import get_analysis_queue
+            from backend.src.services.fix_plan_service import generate_fix_plan
+            from backend.src.services.repo_service import get_current_repo
+            import asyncio
+
+            # 获取会话信息
+            with get_db_session() as db:
+                session = db.query(AnalysisSession).filter(
+                    AnalysisSession.id == int(session_id)
+                ).first()
+
+                if not session:
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({
+                            "code": "SESSION_NOT_FOUND",
+                            "message": "会话不存在",
+                        }),
+                    }
+                    return
+
+                log_entry = db.query(LogEntry).filter(LogEntry.id == session.log_entry_id).first()
+                if not log_entry:
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({
+                            "code": "LOG_NOT_FOUND",
+                            "message": "日志条目不存在",
+                        }),
+                    }
+                    return
+
+                log_entry_id = session.log_entry_id
+                error_message = log_entry.normalized_message or log_entry.original_message
+                stack_trace = log_entry.stack_trace
+
+            # 获取仓库路径
+            repo = get_current_repo()
+            repo_path = repo["local_path"] if repo else None
+
+            # 获取队列
+            queue = get_analysis_queue()
+
+            # 检查是否轮到此任务
+            queue_position = queue.get_queue_position(log_entry_id)
+            is_first = queue_position == 1
+
+            # 如果不是队列第一位，等待
+            if not is_first and queue_position is not None:
+                _logger.info(f"SSE 等待队列: session_id={session_id}, log_entry_id={log_entry_id}, position={queue_position}")
+                yield {
+                    "event": "queued",
+                    "data": json.dumps({
+                        "code": "QUEUED",
+                        "message": f"任务排队中，当前位置：{queue_position}",
+                        "queue_position": queue_position,
+                    }),
+                }
+                # 等待直到轮到此任务
+                while True:
+                    position = queue.get_queue_position(log_entry_id)
+                    if position is None or position > 1:
+                        await asyncio.sleep(1)
+                    else:
+                        break
+                    # 检查是否被取消
+                    with get_db_session() as db:
+                        session = db.query(AnalysisSession).filter(
+                            AnalysisSession.id == int(session_id)
+                        ).first()
+                        if session and session.status == "cancelled":
+                            yield {
+                                "event": "error",
+                                "data": json.dumps({
+                                    "code": "CANCELLED",
+                                    "message": "任务已被取消",
+                                }),
+                            }
+                            return
+
+            _logger.info(f"SSE 分析开始: session_id={session_id}, log_entry_id={log_entry_id}")
+
+            # 流式生成修复计划
+            async for event in generate_fix_plan(log_entry_id, error_message, stack_trace, repo_path):
+                event_type = event["event"]
+                event_data = event["data"]
+
+                if event_type == "result":
+                    # 保存修复计划到数据库
+                    with get_db_session() as db:
+                        session = db.query(AnalysisSession).filter(
+                            AnalysisSession.id == int(session_id)
+                        ).first()
+
+                        if session:
+                            session.status = "completed"
+                            session.completed_at = datetime.now()
+
+                            # 保存修复计划
+                            fix_plan = FixPlan(
+                                log_entry_id=log_entry_id,
+                                session_id=session.id,
+                                root_cause=event_data["root_cause"],
+                                fix_steps=event_data["fix_steps"],
+                                code_locations=event_data["code_locations"],
+                                confidence=event_data["confidence"],
+                                impact_assessment=event_data["impact_assessment"],
+                            )
+                            db.add(fix_plan)
+
+                            # 更新日志状态
+                            log_entry = db.query(LogEntry).filter(LogEntry.id == log_entry_id).first()
+                            if log_entry:
+                                log_entry.analysis_status = "completed"
+
+                            db.commit()
+
+                    _logger.info(f"SSE 分析完成: session_id={session_id}")
+
+                elif event_type == "error":
+                    # 保存错误信息
+                    with get_db_session() as db:
+                        session = db.query(AnalysisSession).filter(
+                            AnalysisSession.id == int(session_id)
+                        ).first()
+
+                        if session:
+                            session.status = "failed"
+                            session.error_message = event_data.get("message", "分析失败")
+                            session.completed_at = datetime.now()
+
+                            log_entry = db.query(LogEntry).filter(LogEntry.id == log_entry_id).first()
+                            if log_entry:
+                                log_entry.analysis_status = "failed"
+
+                            db.commit()
+
+                    _logger.error(f"SSE 分析失败: session_id={session_id}, error={event_data.get('message')}")
+
+                yield {
+                    "event": event_type,
+                    "data": json.dumps(event_data, ensure_ascii=False),
+                }
+
+                # 更新队列
+                if event_type == "result":
+                    await queue.mark_completed(log_entry_id)
+                elif event_type == "error":
+                    await queue.mark_failed(log_entry_id, event_data.get("message", "分析失败"))
+
+        except Exception as e:
+            _logger.error(f"SSE 分析异常: session_id={session_id}, error={e}")
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "code": "INTERNAL_ERROR",
+                    "message": str(e),
+                }),
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+@router.get("/analysis/queue/status", response_model=dict)
+async def get_queue_status():
+    """
+    获取队列状态
+
+    返回当前分析队列的状态信息。
+    """
+    try:
+        from backend.src.services.analysis_queue import get_analysis_queue
+        queue = get_analysis_queue()
+        status = queue.get_queue_status()
+        return make_response(status)
+
+    except Exception as e:
+        logger.error(f"获取队列状态失败: {e}")
+        return make_error("INTERNAL_ERROR", "获取队列状态失败", 500)
 

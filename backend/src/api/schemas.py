@@ -320,3 +320,56 @@ class RepoInfoResponse(BaseModel):
     success: bool
     data: Optional[RepoInfoData] = None
     error: Optional[dict] = None
+
+
+# ============ 007-error-log-analysis-status 新增 Schema ============
+
+
+class AnalysisStartRequest(BaseModel):
+    """启动分析请求"""
+    log_entry_id: int = Field(..., description="日志条目ID")
+
+
+class AnalysisStartResponse(BaseModel):
+    """启动分析响应"""
+    session_id: str
+    status: str
+    queue_position: Optional[int] = None
+
+
+class AnalysisStatusResponse(BaseModel):
+    """分析状态响应"""
+    session_id: str
+    status: str
+    log_entry_id: int
+    queue_position: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class FixPlanData(BaseModel):
+    """修复计划数据"""
+    root_cause: str
+    fix_steps: list[str]
+    code_locations: list[dict]
+    confidence: float
+    impact_assessment: str
+
+
+class FixPlanResponse(BaseModel):
+    """修复计划响应"""
+    log_entry_id: int
+    session_id: Optional[str] = None
+    fix_plan: Optional[FixPlanData] = None
+    status: str  # un_analyzed, analyzing, completed, failed
+
+
+class QueueStatusResponse(BaseModel):
+    """队列状态响应"""
+    queue_size: int
+    max_size: int
+    is_processing: bool
+    processing_log_entry_id: Optional[int] = None
+    tasks: list[dict]

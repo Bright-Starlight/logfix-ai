@@ -8,7 +8,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from sqlalchemy import Column, String, BigInteger, Text, Integer, DateTime, ForeignKey, Index, Boolean, Date, JSON
+from sqlalchemy import Column, String, BigInteger, Text, Integer, DateTime, ForeignKey, Index, Boolean, Date, JSON, Float
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from backend.src.db.session import Base
@@ -136,8 +136,11 @@ class LogEntry(Base):
     last_seen_at = Column(DateTime, nullable=False, default=datetime.now, comment="最近出现时间")
     created_at = Column(DateTime, nullable=False, default=datetime.now, comment="创建时间")
     updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now, comment="更新时间")
+    analysis_status = Column(String(20), nullable=False, default="un_analyzed", comment="分析状态：un_analyzed/analyzing/completed/failed")
 
     category: Mapped[Optional["LogCategory"]] = relationship("LogCategory", back_populates="entries")
+    fix_plan: Mapped[Optional["FixPlan"]] = relationship("FixPlan", back_populates="log_entry", uselist=False)
+    analysis_sessions: Mapped[List["AnalysisSession"]] = relationship("AnalysisSession", back_populates="log_entry")
 
     def __repr__(self) -> str:
         return f"<LogEntry(id={self.id}, error_type={self.error_type}, occurrence_count={self.occurrence_count})>"
@@ -327,3 +330,61 @@ class ImportSession(Base):
 
     def __repr__(self) -> str:
         return f"<ImportSession(id={self.id}, repo_id={self.repo_id}, status={self.status})>"
+
+
+# ============ 007-error-log-analysis-status 新增实体 ============
+
+
+class AnalysisSession(Base):
+    """分析会话实体 - 用于修复计划分析任务跟踪"""
+
+    __tablename__ = "analysis_sessions"
+    __table_args__ = (
+        Index("idx_analysis_session_log_entry", "log_entry_id"),
+        Index("idx_analysis_session_status", "status"),
+        Index("idx_analysis_session_created", "created_at"),
+        {"comment": "修复计划分析会话表，记录分析任务的队列和执行状态"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="主键ID")
+    log_entry_id = Column(BigInteger, ForeignKey("log_entries.id"), nullable=False, comment="关联的日志条目ID")
+    status = Column(String(20), nullable=False, default="pending", comment="状态：pending/queued/processing/completed/failed/cancelled")
+    queue_position = Column(Integer, nullable=True, comment="队列位置（仅queued时有效）")
+    error_message = Column(Text, nullable=True, comment="失败时的错误信息")
+    created_at = Column(DateTime, nullable=False, default=datetime.now, comment="创建时间")
+    started_at = Column(DateTime, nullable=True, comment="开始执行时间")
+    completed_at = Column(DateTime, nullable=True, comment="完成时间")
+
+    log_entry: Mapped["LogEntry"] = relationship("LogEntry", back_populates="analysis_sessions")
+    fix_plan: Mapped[Optional["FixPlan"]] = relationship("FixPlan", back_populates="session", uselist=False)
+
+    def __repr__(self) -> str:
+        return f"<AnalysisSession(id={self.id}, log_entry_id={self.log_entry_id}, status={self.status})>"
+
+
+class FixPlan(Base):
+    """修复计划实体"""
+
+    __tablename__ = "fix_plans"
+    __table_args__ = (
+        Index("idx_fix_plan_log_entry", "log_entry_id"),
+        Index("idx_fix_plan_session", "session_id"),
+        {"comment": "修复计划表，存储AI生成的修复计划详情"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="主键ID")
+    log_entry_id = Column(BigInteger, ForeignKey("log_entries.id"), nullable=False, unique=True, comment="关联的日志条目ID")
+    session_id = Column(BigInteger, ForeignKey("analysis_sessions.id"), nullable=True, comment="关联的分析会话ID")
+    root_cause = Column(Text, nullable=False, comment="问题根因分析")
+    fix_steps = Column(JSON, nullable=False, comment="修复步骤建议列表（JSON数组）")
+    code_locations = Column(JSON, nullable=False, comment="相关代码位置列表（JSON数组）")
+    confidence = Column(Float, nullable=False, comment="置信度 0-1")
+    impact_assessment = Column(Text, nullable=False, comment="影响范围评估")
+    created_at = Column(DateTime, nullable=False, default=datetime.now, comment="创建时间")
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now, comment="更新时间")
+
+    log_entry: Mapped["LogEntry"] = relationship("LogEntry", back_populates="fix_plan")
+    session: Mapped[Optional["AnalysisSession"]] = relationship("AnalysisSession", back_populates="fix_plan")
+
+    def __repr__(self) -> str:
+        return f"<FixPlan(id={self.id}, log_entry_id={self.log_entry_id}, confidence={self.confidence})>"

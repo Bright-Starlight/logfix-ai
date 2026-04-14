@@ -29,6 +29,12 @@ import type {
   ClassificationResultResponse,
   // 006-repo-import 新增
   RepoInfoResponse,
+  // 007-error-log-analysis-status 新增
+  AnalysisStartRequest,
+  AnalysisStartResponse,
+  AnalysisStatusResponse,
+  FixPlanResponse,
+  QueueStatusResponse,
 } from '../types'
 
 const api = axios.create({
@@ -288,6 +294,49 @@ export const repoApi = {
       return { path: response.data.data.path }
     }
     throw new Error(response.data.error?.message || '选择文件夹失败')
+  },
+}
+
+// ============ 007-error-log-analysis-status 分析 API ============
+
+export const analysisApi = {
+  start: async (
+    logEntryId: number
+  ): Promise<ApiResponse<AnalysisStartResponse>> => {
+    const response = await api.post<ApiResponse<AnalysisStartResponse>>('/analysis/start', {
+      log_entry_id: logEntryId,
+    } as AnalysisStartRequest)
+    return response.data
+  },
+
+  getStatus: async (
+    logEntryId: number
+  ): Promise<ApiResponse<AnalysisStatusResponse>> => {
+    const response = await api.get<ApiResponse<AnalysisStatusResponse>>(`/analysis/status/${logEntryId}`)
+    return response.data
+  },
+
+  getFixPlan: async (
+    logEntryId: number
+  ): Promise<ApiResponse<FixPlanResponse>> => {
+    const response = await api.get<ApiResponse<FixPlanResponse>>(`/analysis/fix-plan/${logEntryId}`)
+    return response.data
+  },
+
+  cancel: async (
+    logEntryId: number
+  ): Promise<ApiResponse<{ cancelled: boolean }>> => {
+    const response = await api.post<ApiResponse<{ cancelled: boolean }>>(`/analysis/cancel/${logEntryId}`)
+    return response.data
+  },
+
+  getQueueStatus: async (): Promise<ApiResponse<QueueStatusResponse>> => {
+    const response = await api.get<ApiResponse<QueueStatusResponse>>('/analysis/queue/status')
+    return response.data
+  },
+
+  createEventSource: (sessionId: string): EventSource => {
+    return new EventSource(`/api/analysis/stream/${sessionId}`)
   },
 }
 

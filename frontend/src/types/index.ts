@@ -354,3 +354,88 @@ export interface RepoInfo {
   description?: string
   imported_at: string
 }
+
+// ============ 007-error-log-analysis-status 新增类型 ============
+
+export type AnalysisStatus = 'un_analyzed' | 'analyzing' | 'completed' | 'failed'
+
+export interface AnalysisStartRequest {
+  log_entry_id: number
+}
+
+export interface AnalysisStartResponse {
+  session_id: string
+  status: string
+  queue_position?: number
+}
+
+export interface AnalysisStatusResponse {
+  session_id: string
+  status: string
+  log_entry_id: number
+  queue_position?: number
+  error_message?: string
+  created_at: string
+  started_at?: string
+  completed_at?: string
+}
+
+export interface FixPlanData {
+  root_cause: string
+  fix_steps: string[]
+  code_locations: Array<{
+    file_path: string
+    line_range?: string
+    description?: string
+  }>
+  confidence: number
+  impact_assessment: string
+}
+
+export interface FixPlanResponse {
+  log_entry_id: number
+  session_id?: string
+  fix_plan?: FixPlanData
+  status: AnalysisStatus
+}
+
+export interface QueueStatusResponse {
+  queue_size: number
+  max_size: number
+  is_processing: boolean
+  processing_log_entry_id?: number
+  tasks: Array<{
+    log_entry_id: number
+    session_id: number
+    status: string
+    created_at: string
+    started_at?: string
+  }>
+}
+
+// ============ 007-error-log-analysis-status SSE 事件类型 ============
+
+export interface AnalysisSSEProgressEvent {
+  code: string
+  message: string
+  queue_position?: number
+}
+
+export interface AnalysisSSEErrorEvent {
+  code: string
+  message: string
+  log_entry_id?: number
+}
+
+export interface SSEFixPlanEvent {
+  log_entry_id: number
+  root_cause: string
+  fix_steps: string[]
+  code_locations: Array<{
+    file_path: string
+    line_range?: string
+    description?: string
+  }>
+  confidence: number
+  impact_assessment: string
+}
